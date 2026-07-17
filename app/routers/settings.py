@@ -1,7 +1,7 @@
 """Settings API: Home Assistant connection, entity mapping, location, pricing, event markers."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,6 +9,7 @@ from app.config import get_settings
 from app.db import get_session
 from app.ha_client import HomeAssistantClient
 from app.models import EventMarker, HAEntityConfig, Location, PricingConfig
+from app.scheduler import poll_ha_readings, poll_weather_forecast, poll_weather_historical
 from app.schemas import (
     DiscoveredEntity,
     EventMarkerIn,
@@ -20,7 +21,7 @@ from app.schemas import (
     PricingConfigIn,
     PricingConfigOut,
 )
-from app.weather_client import geocode_address
+from app.weather_client import geocode_address, resolve_timezone
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -52,17 +53,25 @@ async def list_entity_configs(session: AsyncSession = Depends(get_session)):
 
 
 @router.post("/ha/entities", response_model=HAEntityConfigOut)
-async def create_entity_config(payload: HAEntityConfigIn, session: AsyncSession = Depends(get_session)):
+async def create_entity_config(
+    payload: HAEntityConfigIn,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+):
     config = HAEntityConfig(**payload.model_dump())
     session.add(config)
     await session.commit()
     await session.refresh(config)
+    background_tasks.add_task(poll_ha_readings)
     return config
 
 
 @router.put("/ha/entities/{config_id}", response_model=HAEntityConfigOut)
 async def update_entity_config(
-    config_id: int, payload: HAEntityConfigIn, session: AsyncSession = Depends(get_session)
+    config_id: int,
+    payload: HAEntityConfigIn,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
 ):
     config = await session.get(HAEntityConfig, config_id)
     if config is None:
@@ -71,6 +80,8 @@ async def update_entity_config(
         setattr(config, key, value)
     await session.commit()
     await session.refresh(config)
+    if config.enabled:
+        background_tasks.add_task(poll_ha_readings)
     return config
 
 
@@ -88,10 +99,16 @@ async def get_location(session: AsyncSession = Depends(get_session)):
 
 
 @router.post("/location", response_model=LocationOut)
-async def set_location(payload: LocationIn, session: AsyncSession = Depends(get_session)):
+async def set_location(
+    payload: LocationIn,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+):
     geocoded = await geocode_address(payload.address)
     if geocoded is None:
-        raise HTTPException(400, "Could not find that address. Try being more specific.")
+        raise HTTPException(400, "Could not find that address. Try including city, state, and ZIP.")
+
+    timezone = await resolve_timezone(geocoded["latitude"], geocoded["longitude"])
 
     result = await session.execute(select(Location).limit(1))
     location = result.scalar_one_or_none()
@@ -102,10 +119,12 @@ async def set_location(payload: LocationIn, session: AsyncSession = Depends(get_
     location.address = geocoded["display_name"] or payload.address
     location.latitude = geocoded["latitude"]
     location.longitude = geocoded["longitude"]
-    location.timezone = geocoded["timezone"]
+    location.timezone = timezone
 
     await session.commit()
     await session.refresh(location)
+    background_tasks.add_task(poll_weather_historical)
+    background_tasks.add_task(poll_weather_forecast)
     return location
 
 

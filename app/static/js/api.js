@@ -51,6 +51,48 @@ function fmtDate(d) {
   return new Date(d).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+const TEMP_UNIT_KEY = "energyRadarTempUnit";
+
+function getTempUnit() {
+  return localStorage.getItem(TEMP_UNIT_KEY) || "F";
+}
+
+function setTempUnit(unit) {
+  localStorage.setItem(TEMP_UNIT_KEY, unit);
+  document.dispatchEvent(new CustomEvent("tempunitchange", { detail: { unit } }));
+}
+
+function cToF(celsius) {
+  return (celsius * 9) / 5 + 32;
+}
+
+// Converts a Celsius value (as stored/returned by the API) into the user's
+// currently selected display unit.
+function convertTemp(celsius) {
+  if (celsius === null || celsius === undefined) return null;
+  return getTempUnit() === "F" ? cToF(celsius) : celsius;
+}
+
+function tempUnitLabel() {
+  return getTempUnit() === "F" ? "\u00b0F" : "\u00b0C";
+}
+
+function initTempUnitToggle() {
+  const toggle = document.getElementById("temp-unit-toggle");
+  if (!toggle) return;
+  const buttons = [...toggle.querySelectorAll("button")];
+  const applyActive = (unit) => {
+    buttons.forEach((btn) => btn.classList.toggle("active", btn.dataset.unit === unit));
+  };
+  applyActive(getTempUnit());
+  buttons.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      setTempUnit(btn.dataset.unit);
+      applyActive(btn.dataset.unit);
+    });
+  });
+}
+
 async function refreshHaStatusPill() {
   const pill = document.getElementById("ha-status-pill");
   if (!pill) return;
@@ -72,4 +114,7 @@ async function refreshHaStatusPill() {
   }
 }
 
-document.addEventListener("DOMContentLoaded", refreshHaStatusPill);
+document.addEventListener("DOMContentLoaded", () => {
+  refreshHaStatusPill();
+  initTempUnitToggle();
+});

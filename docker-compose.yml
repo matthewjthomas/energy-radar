@@ -33,6 +33,7 @@ services:
       - HA_POLL_INTERVAL_MINUTES=${HA_POLL_INTERVAL_MINUTES:-15}
       - WEATHER_FORECAST_INTERVAL_HOURS=${WEATHER_FORECAST_INTERVAL_HOURS:-3}
       - APP_TIMEZONE=${APP_TIMEZONE:-America/New_York}
+      - HA_STATS_LOOKBACK_DAYS=${HA_STATS_LOOKBACK_DAYS:-395}
     depends_on:
       db:
         condition: service_healthy

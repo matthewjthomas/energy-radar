@@ -1,5 +1,6 @@
 // Shared Chart.js builders for the usage/weather combo chart and forecast chart.
 const _chartInstances = {};
+const _lastUsageWeatherArgs = {};
 
 function _destroyChart(canvasId) {
   if (_chartInstances[canvasId]) {
@@ -22,7 +23,8 @@ function _dailyAvgTemp(weatherPoints) {
   return out;
 }
 
-function renderUsageWeatherChart(canvasId, usageBySource, weatherPoints, eventMarkers = []) {
+function renderUsageWeatherChart(canvasId, usageBySource, weatherPoints, eventMarkers = [], units = {}) {
+  _lastUsageWeatherArgs[canvasId] = { usageBySource, weatherPoints, eventMarkers, units };
   _destroyChart(canvasId);
   const canvas = document.getElementById(canvasId);
   if (!canvas) return;
@@ -37,9 +39,10 @@ function renderUsageWeatherChart(canvasId, usageBySource, weatherPoints, eventMa
   const datasets = [];
   for (const [source, points] of Object.entries(usageBySource)) {
     const byDate = Object.fromEntries(points.map((p) => [p.date, p.value]));
+    const unitSuffix = units[source] ? ` (${units[source]})` : "";
     datasets.push({
       type: "bar",
-      label: SOURCE_LABELS[source] || source,
+      label: `${SOURCE_LABELS[source] || source}${unitSuffix}`,
       data: labels.map((d) => byDate[d] ?? null),
       backgroundColor: SOURCE_COLORS[source] || "#888",
       yAxisID: "y",
@@ -48,8 +51,8 @@ function renderUsageWeatherChart(canvasId, usageBySource, weatherPoints, eventMa
   }
   datasets.push({
     type: "line",
-    label: "Avg temp (\u00b0C)",
-    data: labels.map((d) => tempByDay[d] ?? null),
+    label: `Avg temp (${tempUnitLabel()})`,
+    data: labels.map((d) => (tempByDay[d] !== undefined ? convertTemp(tempByDay[d]) : null)),
     borderColor: "#e7ecf7",
     backgroundColor: "transparent",
     yAxisID: "y1",
@@ -74,7 +77,7 @@ function renderUsageWeatherChart(canvasId, usageBySource, weatherPoints, eventMa
         y: { position: "left", title: { display: true, text: "Usage" }, grid: { color: "#2a3550" } },
         y1: {
           position: "right",
-          title: { display: true, text: "\u00b0C" },
+          title: { display: true, text: tempUnitLabel() },
           grid: { drawOnChartArea: false },
         },
         x: { grid: { color: "#2a3550" } },
@@ -86,11 +89,12 @@ function renderUsageWeatherChart(canvasId, usageBySource, weatherPoints, eventMa
   });
 }
 
-function renderForecastChart(canvasId, forecastPoints, source) {
+function renderForecastChart(canvasId, forecastPoints, source, unit = "") {
   _destroyChart(canvasId);
   const canvas = document.getElementById(canvasId);
   if (!canvas) return;
 
+  const unitSuffix = unit ? ` (${unit})` : "";
   const labels = forecastPoints.map((p) => p.date);
   _chartInstances[canvasId] = new Chart(canvas, {
     type: "line",
@@ -98,7 +102,7 @@ function renderForecastChart(canvasId, forecastPoints, source) {
       labels,
       datasets: [
         {
-          label: `Predicted ${SOURCE_LABELS[source] || source} usage`,
+          label: `Predicted ${SOURCE_LABELS[source] || source} usage${unitSuffix}`,
           data: forecastPoints.map((p) => p.predicted_value),
           borderColor: SOURCE_COLORS[source] || "#4fd1c5",
           backgroundColor: "rgba(79, 209, 197, 0.15)",
@@ -118,3 +122,12 @@ function renderForecastChart(canvasId, forecastPoints, source) {
     },
   });
 }
+
+// Re-render any already-drawn usage/weather charts (with their last data) when
+// the user toggles between Fahrenheit and Celsius, without refetching from the API.
+document.addEventListener("tempunitchange", () => {
+  for (const [canvasId, args] of Object.entries(_lastUsageWeatherArgs)) {
+    renderUsageWeatherChart(canvasId, args.usageBySource, args.weatherPoints, args.eventMarkers, args.units);
+  }
+});
+

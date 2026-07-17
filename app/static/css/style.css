@@ -61,7 +61,28 @@ a { color: var(--accent); text-decoration: none; }
 
 .nav-link:hover { background: rgba(79, 209, 197, 0.1); color: var(--text); }
 
-.sidebar-footer { font-size: 0.8rem; }
+.sidebar-footer { font-size: 0.8rem; display: flex; flex-direction: column; gap: 10px; }
+
+.unit-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+  width: fit-content;
+}
+.unit-toggle button {
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  border-radius: 0;
+  padding: 5px 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.unit-toggle button.active {
+  background: var(--accent);
+  color: #0b1622;
+}
 
 .pill {
   display: inline-block;

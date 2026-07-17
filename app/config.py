@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     ha_poll_interval_minutes: int = 15
     weather_forecast_interval_hours: int = 3
     app_timezone: str = "UTC"
+    # How far back to backfill on first poll of a newly mapped entity, using HA's
+    # long-term statistics (which HA retains far longer than raw state history).
+    ha_stats_lookback_days: int = 395
 
     @property
     def ha_configured(self) -> bool:

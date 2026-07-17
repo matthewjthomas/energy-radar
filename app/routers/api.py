@@ -127,6 +127,19 @@ async def get_enabled_sources(session: AsyncSession = Depends(get_session)):
     return await _enabled_sources(session)
 
 
+@router.get("/sources/units", response_model=dict[str, str])
+async def get_source_units(session: AsyncSession = Depends(get_session)):
+    """Best-effort display unit per enabled source, taken from its mapped HA entity."""
+    rows = (
+        await session.execute(select(HAEntityConfig).where(HAEntityConfig.enabled.is_(True)))
+    ).scalars().all()
+    units: dict[str, str] = {}
+    for row in rows:
+        if row.unit and row.source_type.value not in units:
+            units[row.source_type.value] = row.unit
+    return units
+
+
 @router.get("/usage", response_model=dict[str, list[UsagePoint]])
 async def get_usage(
     start: dt.date | None = None,

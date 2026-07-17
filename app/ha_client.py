@@ -1,13 +1,18 @@
-"""Minimal Home Assistant REST API client."""
+"""Minimal Home Assistant REST + WebSocket API client."""
 from __future__ import annotations
 
 import datetime as dt
+import itertools
+import json
 import logging
 from typing import Any
 
 import httpx
+import websockets
 
 logger = logging.getLogger(__name__)
+
+_ws_message_ids = itertools.count(1)
 
 
 class HomeAssistantError(RuntimeError):
@@ -17,6 +22,7 @@ class HomeAssistantError(RuntimeError):
 class HomeAssistantClient:
     def __init__(self, base_url: str, token: str, timeout: float = 15.0) -> None:
         self.base_url = base_url.rstrip("/")
+        self._token = token
         self._headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
@@ -114,4 +120,74 @@ class HomeAssistantClient:
             ts_raw = entry.get("last_changed") or entry.get("last_updated")
             timestamp = dt.datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
             points.append((timestamp, value))
+        return points
+
+    async def get_statistics(
+        self, entity_id: str, start: dt.datetime, end: dt.datetime, period: str = "hour"
+    ) -> list[dict[str, Any]]:
+        """Fetch Home Assistant long-term statistics for an entity.
+
+        Unlike `/api/history`, which is purged after the recorder's configured
+        retention window (often just a few days), long-term statistics are kept
+        indefinitely by default, so this is the preferred source for backfilling
+        deep history. Raises HomeAssistantError on any connection/protocol issue
+        so callers can fall back to raw history.
+        """
+        scheme = "wss" if self.base_url.startswith("https://") else "ws"
+        host = self.base_url.split("://", 1)[-1]
+        ws_url = f"{scheme}://{host}/api/websocket"
+
+        try:
+            async with websockets.connect(ws_url, open_timeout=self._timeout) as ws:
+                hello = json.loads(await ws.recv())
+                if hello.get("type") != "auth_required":
+                    raise HomeAssistantError("Unexpected Home Assistant websocket handshake")
+
+                await ws.send(json.dumps({"type": "auth", "access_token": self._token}))
+                auth_resp = json.loads(await ws.recv())
+                if auth_resp.get("type") != "auth_ok":
+                    raise HomeAssistantError("Home Assistant websocket authentication failed")
+
+                request_id = next(_ws_message_ids)
+                await ws.send(
+                    json.dumps(
+                        {
+                            "id": request_id,
+                            "type": "recorder/statistics_during_period",
+                            "start_time": start.isoformat(),
+                            "end_time": end.isoformat(),
+                            "statistic_ids": [entity_id],
+                            "period": period,
+                        }
+                    )
+                )
+                response = json.loads(await ws.recv())
+        except HomeAssistantError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - any websocket/connection failure
+            raise HomeAssistantError(f"Home Assistant websocket request failed: {exc}") from exc
+
+        if not response.get("success"):
+            error = response.get("error", {})
+            raise HomeAssistantError(f"HA statistics request failed: {error.get('message', error)}")
+
+        raw_points = response.get("result", {}).get(entity_id, [])
+        points: list[dict[str, Any]] = []
+        for entry in raw_points:
+            start_raw = entry.get("start")
+            if start_raw is None:
+                continue
+            if isinstance(start_raw, (int, float)):
+                # HA reports statistic boundaries as epoch milliseconds.
+                timestamp = dt.datetime.fromtimestamp(start_raw / 1000, tz=dt.timezone.utc)
+            else:
+                timestamp = dt.datetime.fromisoformat(str(start_raw).replace("Z", "+00:00"))
+            points.append(
+                {
+                    "time": timestamp,
+                    "sum": entry.get("sum"),
+                    "state": entry.get("state"),
+                    "mean": entry.get("mean"),
+                }
+            )
         return points

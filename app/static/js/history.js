@@ -70,13 +70,14 @@ async function loadEvents() {
 }
 
 async function refreshHistory() {
-  const [usageBySource, weather] = await Promise.all([
+  const [usageBySource, weather, units] = await Promise.all([
     Api.get(`/api/usage?${rangeQuery()}`),
     Api.get(`/api/weather?${rangeQuery()}`),
+    Api.get("/api/sources/units"),
   ]);
   const sources = Object.keys(usageBySource);
   await loadEvents();
-  renderUsageWeatherChart("usage-weather-chart", usageBySource, weather, cachedEvents);
+  renderUsageWeatherChart("usage-weather-chart", usageBySource, weather, cachedEvents, units);
   await loadTrends(sources);
 }
 

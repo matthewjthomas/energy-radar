@@ -18,6 +18,108 @@ from app.weather_client import get_forecast_weather, get_historical_weather
 logger = logging.getLogger(__name__)
 
 
+def _rows_from_history(
+    cfg: HAEntityConfig,
+    points: list[tuple[dt.datetime, float]],
+    last_reading: Reading | None,
+) -> list[dict]:
+    prev_value = last_reading.raw_value if last_reading else None
+    rows = []
+    for timestamp, value in points:
+        if last_reading and timestamp <= last_reading.time:
+            continue
+        consumption: float | None
+        if cfg.is_cumulative:
+            consumption = value - prev_value if prev_value is not None and value >= prev_value else None
+        else:
+            consumption = value
+        prev_value = value
+        rows.append(
+            {
+                "time": timestamp,
+                "source_type": cfg.source_type,
+                "entity_id": cfg.entity_id,
+                "raw_value": value,
+                "consumption": consumption,
+            }
+        )
+    return rows
+
+
+async def _rows_from_statistics(
+    client: HomeAssistantClient,
+    cfg: HAEntityConfig,
+    start: dt.datetime,
+    end: dt.datetime,
+    last_reading: Reading | None,
+) -> list[dict] | None:
+    """Build Reading rows from HA long-term statistics.
+
+    Returns None (rather than an empty list) when statistics aren't usable for
+    this entity at all, so the caller can fall back to raw history instead of
+    treating "no new data yet" as "this entity has no long-term stats".
+    """
+    try:
+        points = await client.get_statistics(cfg.entity_id, start, end, period="hour")
+    except HomeAssistantError as exc:
+        logger.warning(
+            "HA long-term statistics unavailable for %s (%s), falling back to raw history",
+            cfg.entity_id,
+            exc,
+        )
+        return None
+
+    if not points and last_reading is None:
+        # Brand new mapping with zero statistics at all likely means this entity
+        # doesn't have long-term statistics enabled; let the caller fall back.
+        logger.info("No HA long-term statistics returned for %s, falling back to raw history", cfg.entity_id)
+        return None
+
+    prev_value = last_reading.raw_value if last_reading else None
+    rows = []
+    usable_points = 0
+    for point in points:
+        timestamp = point["time"]
+        if last_reading and timestamp <= last_reading.time:
+            continue
+        if cfg.is_cumulative:
+            value = point["sum"] if point["sum"] is not None else point["state"]
+        else:
+            value = point["mean"] if point["mean"] is not None else point["state"]
+        if value is None:
+            continue
+        usable_points += 1
+        consumption: float | None
+        if cfg.is_cumulative:
+            consumption = value - prev_value if prev_value is not None and value >= prev_value else None
+        else:
+            consumption = value
+        prev_value = value
+        rows.append(
+            {
+                "time": timestamp,
+                "source_type": cfg.source_type,
+                "entity_id": cfg.entity_id,
+                "raw_value": value,
+                "consumption": consumption,
+            }
+        )
+
+    if points and usable_points == 0:
+        # Statistics exist for this entity, but none of the fetched points had a
+        # usable sum/state/mean value for the configured mode (e.g. mapped as
+        # cumulative but HA never records a "sum" for it). Fall back rather than
+        # silently reporting zero data forever.
+        logger.warning(
+            "HA long-term statistics for %s had no usable %s values, falling back to raw history",
+            cfg.entity_id,
+            "sum" if cfg.is_cumulative else "mean/state",
+        )
+        return None
+
+    return rows
+
+
 async def poll_ha_readings() -> None:
     settings = get_settings()
     if not settings.ha_configured:
@@ -43,34 +145,27 @@ async def poll_ha_readings() -> None:
                 )
             ).scalar_one_or_none()
 
-            start = last_reading.time if last_reading else now - dt.timedelta(days=2)
-            prev_value = last_reading.raw_value if last_reading else None
+            # Long-term statistics are retained indefinitely by default (unlike raw
+            # state history, which HA typically purges after ~10 days), so they're
+            # the preferred source for a deep initial backfill.
+            stats_start = (
+                last_reading.time if last_reading else now - dt.timedelta(days=settings.ha_stats_lookback_days)
+            )
+            rows = await _rows_from_statistics(client, cfg, stats_start, now, last_reading)
 
-            try:
-                points = await client.get_history(cfg.entity_id, start, now)
-            except HomeAssistantError:
-                logger.warning("Failed to fetch HA history for %s", cfg.entity_id, exc_info=True)
-                continue
-
-            rows = []
-            for timestamp, value in points:
-                if last_reading and timestamp <= last_reading.time:
+            if rows is None:
+                # No long-term statistics available for this entity at all -
+                # fall back to raw history (limited to whatever HA has retained).
+                history_start = last_reading.time if last_reading else now - dt.timedelta(days=2)
+                try:
+                    history_points = await client.get_history(cfg.entity_id, history_start, now)
+                except HomeAssistantError:
+                    logger.warning("Failed to fetch HA history for %s", cfg.entity_id, exc_info=True)
                     continue
-                consumption: float | None
-                if cfg.is_cumulative:
-                    consumption = value - prev_value if prev_value is not None and value >= prev_value else None
-                else:
-                    consumption = value
-                prev_value = value
-                rows.append(
-                    {
-                        "time": timestamp,
-                        "source_type": cfg.source_type,
-                        "entity_id": cfg.entity_id,
-                        "raw_value": value,
-                        "consumption": consumption,
-                    }
-                )
+                rows = _rows_from_history(cfg, history_points, last_reading)
+                logger.info("Fetched %d raw-history rows for %s", len(rows), cfg.entity_id)
+            else:
+                logger.info("Fetched %d long-term-statistics rows for %s", len(rows), cfg.entity_id)
 
             if rows:
                 stmt = pg_insert(Reading).values(rows)
