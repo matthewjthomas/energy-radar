@@ -1,0 +1,41 @@
+services:
+  db:
+    image: timescale/timescaledb:latest-pg16
+    container_name: energy-radar-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-energyradar}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-changeme}
+      - POSTGRES_DB=${POSTGRES_DB:-energyradar}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-energyradar}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    image: energy-radar:latest
+    container_name: energy-radar-app
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # Home Assistant connection
+      - HA_URL=${HA_URL}
+      - HA_TOKEN=${HA_TOKEN}
+      # Database
+      - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://energyradar:changeme@db:5432/energyradar}
+      # App behavior
+      - APP_PORT=${APP_PORT:-8000}
+      - HA_POLL_INTERVAL_MINUTES=${HA_POLL_INTERVAL_MINUTES:-15}
+      - WEATHER_FORECAST_INTERVAL_HOURS=${WEATHER_FORECAST_INTERVAL_HOURS:-3}
+      - APP_TIMEZONE=${APP_TIMEZONE:-America/New_York}
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  db-data:

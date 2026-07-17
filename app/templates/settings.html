@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Settings · Energy Radar{% endblock %}
+{% block content %}
+  <header class="page-header">
+    <div>
+      <h1>Settings</h1>
+      <p class="subtitle">Connect Home Assistant sources, set your address, and pricing.</p>
+    </div>
+  </header>
+
+  <section class="panel">
+    <h2>Home Assistant</h2>
+    <p id="ha-status-line" class="muted">Checking connection&hellip;</p>
+    <button id="discover-btn" type="button">Discover sensors</button>
+    <div id="discovered-list" class="insights-list"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Source mapping</h2>
+    <p class="muted">Each utility is optional &mdash; only mapped, enabled sources appear on the dashboard.</p>
+    <div id="entity-config-list" class="insights-list"></div>
+  </section>
+
+  <section class="two-col">
+    <div class="panel">
+      <h2>Location</h2>
+      <form id="location-form" class="stacked-form">
+        <label>Address <input type="text" id="address-input" placeholder="123 Main St, Springfield" required /></label>
+        <button type="submit">Save &amp; geocode</button>
+      </form>
+      <p id="location-status" class="muted"></p>
+    </div>
+    <div class="panel">
+      <h2>Pricing (optional)</h2>
+      <form id="pricing-form" class="stacked-form">
+        <label>Electricity ($/kWh) <input type="number" step="0.0001" id="price-electricity" /></label>
+        <label>Gas ($/unit) <input type="number" step="0.0001" id="price-gas" /></label>
+        <label>Water ($/unit) <input type="number" step="0.0001" id="price-water" /></label>
+        <button type="submit">Save pricing</button>
+      </form>
+    </div>
+  </section>
+{% endblock %}
+{% block scripts %}
+  <script src="/static/js/settings.js"></script>
+{% endblock %}

@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Dashboard · Energy Radar{% endblock %}
+{% block content %}
+  <header class="page-header">
+    <div>
+      <h1>Dashboard</h1>
+      <p class="subtitle">Usage over the last 7 days, correlated with weather.</p>
+    </div>
+    <div class="range-picker">
+      <input id="range-input" placeholder="Select date range&hellip;" readonly />
+    </div>
+  </header>
+
+  {% if not ha_configured %}
+  <div class="banner banner-warning">
+    Home Assistant isn't configured yet. Set <code>HA_URL</code> and <code>HA_TOKEN</code>,
+    then head to <a href="/settings">Settings</a> to map your sensors.
+  </div>
+  {% endif %}
+
+  <section id="summary-cards" class="card-grid"></section>
+
+  <section class="panel">
+    <h2>Usage vs. Weather</h2>
+    <div class="chart-wrap"><canvas id="usage-weather-chart"></canvas></div>
+  </section>
+
+  <section class="two-col">
+    <div class="panel">
+      <h2>Forecast (next 14 days)</h2>
+      <div class="chart-wrap"><canvas id="forecast-chart"></canvas></div>
+    </div>
+    <div class="panel">
+      <h2>Insights</h2>
+      <div id="insights-list" class="insights-list"></div>
+    </div>
+  </section>
+{% endblock %}
+{% block scripts %}
+  <script src="/static/js/charts.js"></script>
+  <script src="/static/js/dashboard.js"></script>
+{% endblock %}
