@@ -80,13 +80,17 @@ async def _rows_from_statistics(
     usable_points = 0
     for point in points:
         timestamp = point["time"]
-        if last_reading and timestamp <= last_reading.time:
-            continue
         if cfg.is_cumulative:
             value = point["sum"] if point["sum"] is not None else point["state"]
         else:
             value = point["mean"] if point["mean"] is not None else point["state"]
         if value is None:
+            continue
+        if last_reading and timestamp <= last_reading.time:
+            # Update prev_value from context points so the first new row diffs
+            # against a statistics-series value rather than a raw-history value
+            # (raw history and statistics use different cumulative baselines).
+            prev_value = value
             continue
         usable_points += 1
         consumption: float | None
@@ -148,8 +152,14 @@ async def poll_ha_readings() -> None:
             # Long-term statistics are retained indefinitely by default (unlike raw
             # state history, which HA typically purges after ~10 days), so they're
             # the preferred source for a deep initial backfill.
+            # Extend the window 2 hours before last_reading so _rows_from_statistics
+            # can calibrate prev_value from within the statistics series before
+            # computing the first new delta (avoids scale mismatch when transitioning
+            # from raw-history readings to statistics-based readings).
             stats_start = (
-                last_reading.time if last_reading else now - dt.timedelta(days=settings.ha_stats_lookback_days)
+                last_reading.time - dt.timedelta(hours=2)
+                if last_reading
+                else now - dt.timedelta(days=settings.ha_stats_lookback_days)
             )
             rows = await _rows_from_statistics(client, cfg, stats_start, now, last_reading)
 
