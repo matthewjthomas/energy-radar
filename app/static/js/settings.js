@@ -139,14 +139,26 @@ document.addEventListener("DOMContentLoaded", () => {
 
   document.getElementById("pricing-form").addEventListener("submit", async (e) => {
     e.preventDefault();
-    for (const source of ["electricity", "gas", "water"]) {
-      const field = document.getElementById(`price-${source}`);
-      if (field.value === "") continue;
-      await Api.post("/api/settings/pricing", {
-        source_type: source,
-        price_per_unit: parseFloat(field.value),
-        currency: "USD",
-      });
+    const btn = e.submitter || document.querySelector("#pricing-form button[type=submit]");
+    const status = document.getElementById("pricing-status");
+    const originalText = btn ? btn.textContent : null;
+    try {
+      if (btn) btn.disabled = true;
+      for (const source of ["electricity", "gas", "water"]) {
+        const field = document.getElementById(`price-${source}`);
+        if (field.value === "") continue;
+        await Api.post("/api/settings/pricing", {
+          source_type: source,
+          price_per_unit: parseFloat(field.value),
+          currency: "USD",
+        });
+      }
+      if (status) { status.textContent = "Saved!"; status.className = "settings-status ok"; }
+    } catch (err) {
+      if (status) { status.textContent = "Failed to save prices."; status.className = "settings-status error"; }
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = originalText; }
+      if (status) setTimeout(() => { status.textContent = ""; status.className = "settings-status"; }, 3000);
     }
   });
 });

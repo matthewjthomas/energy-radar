@@ -203,6 +203,10 @@ button.danger { background: var(--danger); }
 
 .muted { color: var(--muted); }
 
+.settings-status { font-size: 0.85rem; margin-left: 10px; }
+.settings-status.ok { color: #4caf82; }
+.settings-status.error { color: var(--danger); }
+
 .range-picker input {
   background: var(--bg-alt);
   border: 1px solid var(--border);
