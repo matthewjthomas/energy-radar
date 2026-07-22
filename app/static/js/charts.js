@@ -80,7 +80,15 @@ function renderUsageWeatherChart(canvasId, usageBySource, weatherPoints, eventMa
           title: { display: true, text: tempUnitLabel() },
           grid: { drawOnChartArea: false },
         },
-        x: { grid: { color: "#2a3550" } },
+        x: {
+          grid: { color: "#2a3550" },
+          ticks: {
+            color: (ctx) => {
+              const today = new Date().toISOString().slice(0, 10);
+              return labels[ctx.index] === today ? "#e7ecf7" : "#8b96ad";
+            },
+          },
+        },
       },
       plugins: {
         legend: { labels: { color: "#e7ecf7" } },
@@ -115,7 +123,15 @@ function renderForecastChart(canvasId, forecastPoints, source, unit = "") {
       responsive: true,
       maintainAspectRatio: false,
       scales: {
-        x: { grid: { color: "#2a3550" } },
+        x: {
+          grid: { color: "#2a3550" },
+          ticks: {
+            color: (ctx) => {
+              const today = new Date().toISOString().slice(0, 10);
+              return labels[ctx.index] === today ? "#e7ecf7" : "#8b96ad";
+            },
+          },
+        },
         y: { grid: { color: "#2a3550" } },
       },
       plugins: { legend: { labels: { color: "#e7ecf7" } } },

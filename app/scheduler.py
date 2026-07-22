@@ -75,7 +75,11 @@ async def _rows_from_statistics(
         logger.info("No HA long-term statistics returned for %s, falling back to raw history", cfg.entity_id)
         return None
 
-    prev_value = last_reading.raw_value if last_reading else None
+    # Do not seed prev_value from last_reading.raw_value – raw history and HA
+    # long-term statistics use different cumulative baselines (e.g. daily-reset
+    # "Today" sensors vs lifetime sum in statistics), so let the stats series
+    # establish its own baseline from the 2h context window fetched above.
+    prev_value = None
     rows = []
     usable_points = 0
     for point in points:
@@ -86,12 +90,6 @@ async def _rows_from_statistics(
             value = point["mean"] if point["mean"] is not None else point["state"]
         if value is None:
             continue
-        if last_reading and timestamp <= last_reading.time:
-            # Update prev_value from context points so the first new row diffs
-            # against a statistics-series value rather than a raw-history value
-            # (raw history and statistics use different cumulative baselines).
-            prev_value = value
-            continue
         usable_points += 1
         consumption: float | None
         if cfg.is_cumulative:
@@ -99,6 +97,12 @@ async def _rows_from_statistics(
         else:
             consumption = value
         prev_value = value
+        # Append ALL points, including the 2h context window before last_reading.
+        # on_conflict_do_nothing deduplicates rows that already exist.  Including
+        # context points means a stats jump that falls inside the window (e.g.
+        # because a raw-history row pushed last_reading past a stats hour boundary)
+        # is captured with the correct consumption rather than silently absorbed
+        # into prev_value and discarded.
         rows.append(
             {
                 "time": timestamp,
