@@ -148,6 +148,15 @@ async def upsert_pricing(payload: PricingConfigIn, session: AsyncSession = Depen
     return pricing
 
 
+@router.post("/maintenance/refresh")
+async def trigger_refresh(background_tasks: BackgroundTasks):
+    """Kick off an immediate poll of HA readings and a weather refresh."""
+    background_tasks.add_task(poll_ha_readings)
+    background_tasks.add_task(poll_weather_historical)
+    background_tasks.add_task(poll_weather_forecast)
+    return {"ok": True}
+
+
 @router.get("/events", response_model=list[EventMarkerOut])
 async def list_events(session: AsyncSession = Depends(get_session)):
     result = await session.execute(select(EventMarker).order_by(EventMarker.event_date.desc()))

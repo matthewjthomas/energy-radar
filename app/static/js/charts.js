@@ -104,6 +104,7 @@ function renderForecastChart(canvasId, forecastPoints, source, unit = "") {
 
   const unitSuffix = unit ? ` (${unit})` : "";
   const labels = forecastPoints.map((p) => p.date);
+  const hasTemps = forecastPoints.some((p) => p.high_temp_c != null);
   _chartInstances[canvasId] = new Chart(canvas, {
     type: "line",
     data: {
@@ -116,12 +117,24 @@ function renderForecastChart(canvasId, forecastPoints, source, unit = "") {
           backgroundColor: "rgba(79, 209, 197, 0.15)",
           fill: true,
           tension: 0.3,
+          yAxisID: "y",
         },
+        ...(hasTemps ? [{
+          label: `High temp (${tempUnitLabel()})`,
+          data: forecastPoints.map((p) => p.high_temp_c != null ? convertTemp(p.high_temp_c) : null),
+          borderColor: "#e7ecf7",
+          backgroundColor: "transparent",
+          borderDash: [4, 3],
+          tension: 0.3,
+          pointRadius: 2,
+          yAxisID: "y1",
+        }] : []),
       ],
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
       scales: {
         x: {
           grid: { color: "#2a3550" },
@@ -133,6 +146,11 @@ function renderForecastChart(canvasId, forecastPoints, source, unit = "") {
           },
         },
         y: { grid: { color: "#2a3550" } },
+        ...(hasTemps ? { y1: {
+          position: "right",
+          title: { display: true, text: tempUnitLabel() },
+          grid: { drawOnChartArea: false },
+        }} : {}),
       },
       plugins: { legend: { labels: { color: "#e7ecf7" } } },
     },

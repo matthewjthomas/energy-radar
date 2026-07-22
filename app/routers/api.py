@@ -209,14 +209,29 @@ async def get_usage_forecast(
         raise HTTPException(400, "Not enough historical data yet to build a forecast.")
 
     now = dt.datetime.now(dt.timezone.utc)
+    tz = _local_tz()
     fc_records = await _weather_records(session, now, now + dt.timedelta(days=days), include_forecast=True)
-    future_weather = aggregate_daily_weather([r for r in fc_records if r["time"] > now.astimezone(_local_tz())])
+    future_weather = aggregate_daily_weather([r for r in fc_records if r["time"] > now.astimezone(tz)])
     predicted = forecast_usage(model, future_weather)
+
+    # Daily high temperature from forecast records.
+    daily_high: dict[dt.date, float] = {}
+    for r in fc_records:
+        if r["temperature_c"] is None:
+            continue
+        day = r["time"].astimezone(tz).date()
+        if day not in daily_high or r["temperature_c"] > daily_high[day]:
+            daily_high[day] = r["temperature_c"]
 
     pricing = await _pricing_map(session)
     price = pricing.get(source)
     return [
-        ForecastPoint(date=day, predicted_value=value, predicted_cost=(value * price if price else None))
+        ForecastPoint(
+            date=day,
+            predicted_value=value,
+            predicted_cost=(value * price if price else None),
+            high_temp_c=daily_high.get(day),
+        )
         for day, value in sorted(predicted.items())
     ]
 

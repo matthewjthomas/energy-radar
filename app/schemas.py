@@ -99,6 +99,7 @@ class ForecastPoint(BaseModel):
     date: dt.date
     predicted_value: float
     predicted_cost: float | None = None
+    high_temp_c: float | None = None
 
 
 class TrendShift(BaseModel):

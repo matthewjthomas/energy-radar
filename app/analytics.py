@@ -86,6 +86,16 @@ def fit_usage_model(
     if len(dates) < 3:
         return None
 
+    # Drop likely partial days (e.g. the first day of tracking when the sensor
+    # was set up mid-day).  A day whose usage is below 30% of the median is an
+    # outlier that would corrupt the weather/usage regression.
+    usage_vals = np.array([usage_by_date[d] for d in dates])
+    median_usage = float(np.median(usage_vals))
+    threshold = median_usage * 0.30
+    dates = [d for d in dates if usage_by_date[d] >= threshold]
+    if len(dates) < 3:
+        return None
+
     y = np.array([usage_by_date[d] for d in dates])
     x_hdd = np.array([weather_by_date[d]["hdd"] for d in dates])
     x_cdd = np.array([weather_by_date[d]["cdd"] for d in dates])

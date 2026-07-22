@@ -161,4 +161,25 @@ document.addEventListener("DOMContentLoaded", () => {
       if (status) setTimeout(() => { status.textContent = ""; status.className = "settings-status"; }, 3000);
     }
   });
+
+  document.getElementById("refresh-btn").addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    const status = document.getElementById("refresh-status");
+    btn.disabled = true;
+    btn.textContent = "Refreshing…";
+    status.textContent = "";
+    status.className = "settings-status";
+    try {
+      await Api.post("/api/settings/maintenance/refresh", {});
+      status.textContent = "Refresh queued — data will update in the background.";
+      status.className = "settings-status ok";
+    } catch (err) {
+      status.textContent = "Refresh failed.";
+      status.className = "settings-status error";
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Refresh data now";
+      setTimeout(() => { status.textContent = ""; status.className = "settings-status"; }, 5000);
+    }
+  });
 });

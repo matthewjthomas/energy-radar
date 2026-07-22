@@ -41,6 +41,12 @@
       </form>
     </div>
   </section>
+  <section class="panel">
+    <h2>Maintenance</h2>
+    <p class="muted">Force an immediate re-poll of Home Assistant readings and a weather refresh. The forecast model re-computes automatically on next page load once new data is in.</p>
+    <button id="refresh-btn" type="button">Refresh data now</button>
+    <span id="refresh-status" class="settings-status"></span>
+  </section>
 {% endblock %}
 {% block scripts %}
   <script src="/static/js/settings.js"></script>
