@@ -169,9 +169,10 @@ document.addEventListener("DOMContentLoaded", () => {
     btn.textContent = "Refreshing…";
     status.textContent = "";
     status.className = "settings-status";
+    const minDelay = new Promise((r) => setTimeout(r, 1500));
     try {
-      await Api.post("/api/settings/maintenance/refresh", {});
-      status.textContent = "Refresh queued — data will update in the background.";
+      await Promise.all([Api.post("/api/settings/maintenance/refresh", {}), minDelay]);
+      status.textContent = "Done — data is updating in the background.";
       status.className = "settings-status ok";
     } catch (err) {
       status.textContent = "Refresh failed.";
