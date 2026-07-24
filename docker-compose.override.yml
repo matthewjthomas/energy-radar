@@ -1,7 +1,0 @@
-# Local development override — builds the image from source instead of pulling
-# from GHCR. Docker Compose merges this automatically when both files are present.
-# Do NOT copy this file to the Raspberry Pi / production deployment.
-services:
-  app:
-    build: .
-    image: energy-radar:latest
