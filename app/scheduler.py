@@ -191,6 +191,7 @@ async def poll_ha_readings() -> None:
 
 async def poll_weather_historical() -> None:
     """Backfill actual weather observations up to yesterday (archive has a short lag)."""
+    settings = get_settings()
     async with session_scope() as session:
         location = (await session.execute(select(Location).limit(1))).scalar_one_or_none()
         if location is None:
@@ -203,7 +204,11 @@ async def poll_weather_historical() -> None:
         ).scalar_one_or_none()
 
         yesterday = dt.date.today() - dt.timedelta(days=1)
-        start_date = latest.time.date() + dt.timedelta(days=1) if latest else yesterday - dt.timedelta(days=90)
+        start_date = (
+            latest.time.date() + dt.timedelta(days=1)
+            if latest
+            else yesterday - dt.timedelta(days=settings.weather_lookback_days)
+        )
         if start_date > yesterday:
             return
 

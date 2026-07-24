@@ -174,12 +174,27 @@ async def get_weather(
 
 
 async def _build_model(session: AsyncSession, source: SourceType):
-    # Use up to a year of history for a robust weather/usage regression.
+    # Training window matches the weather/HA lookback so the model uses all
+    # available historical data as it accumulates over months and seasons.
+    settings = get_settings()
     end_dt = dt.datetime.now(dt.timezone.utc)
-    start_dt = end_dt - dt.timedelta(days=365)
+    start_dt = end_dt - dt.timedelta(days=settings.weather_lookback_days)
     readings = await _readings_for_source(session, source, start_dt, end_dt)
     weather = await _weather_records(session, start_dt, end_dt, include_forecast=False)
-    usage_by_date = aggregate_daily_usage(readings)
+
+    # Drop partial days: if a day's readings don't span at least 20 hours the
+    # sensor wasn't active for the full day (e.g. first day of tracking), and
+    # including it skews the weather/usage regression.
+    tz = _local_tz()
+    times_by_day: dict[dt.date, list[dt.datetime]] = {}
+    for ts, _ in readings:
+        times_by_day.setdefault(ts.date(), []).append(ts)
+    full_days = {
+        day for day, times in times_by_day.items()
+        if (max(times) - min(times)).total_seconds() >= 20 * 3600
+    }
+
+    usage_by_date = {d: v for d, v in aggregate_daily_usage(readings).items() if d in full_days}
     weather_by_date = aggregate_daily_weather(weather)
     model = fit_usage_model(usage_by_date, weather_by_date)
     return model, usage_by_date, weather_by_date

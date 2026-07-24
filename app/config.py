@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     # How far back to backfill on first poll of a newly mapped entity, using HA's
     # long-term statistics (which HA retains far longer than raw state history).
     ha_stats_lookback_days: int = 395
+    # How far back to fetch historical weather observations. Should be at least
+    # as large as ha_stats_lookback_days so the regression model can use all
+    # available electricity/gas/water history.
+    weather_lookback_days: int = 395
 
     @property
     def ha_configured(self) -> bool:

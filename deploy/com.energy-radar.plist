@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd plist for Energy Radar (macOS)
+
+  INSTALL (runs at login for your user account):
+    1. Edit INSTALL_DIR in the two ProgramArguments strings below.
+    2. cp deploy/com.energy-radar.plist ~/Library/LaunchAgents/
+    3. launchctl load ~/Library/LaunchAgents/com.energy-radar.plist
+
+  To start/stop without rebooting:
+    launchctl start  com.energy-radar
+    launchctl stop   com.energy-radar
+
+  To uninstall:
+    launchctl unload ~/Library/LaunchAgents/com.energy-radar.plist
+    rm ~/Library/LaunchAgents/com.energy-radar.plist
+
+  Logs are written to /tmp/energy-radar.out and /tmp/energy-radar.err.
+
+  NOTE: Docker Desktop must be set to "Start at Login" (Preferences → General)
+  so it is already running when this agent fires.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.energy-radar</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <!-- ── Change INSTALL_DIR to the absolute path of this repo ── -->
+    <string>cd /Users/mthomas/wd/energy-radar &amp;&amp; docker compose up --remove-orphans</string>
+  </array>
+
+  <!-- Start automatically at login -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- Restart if the process exits unexpectedly -->
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+
+  <!-- Wait 15 s before a restart attempt -->
+  <key>ThrottleInterval</key>
+  <integer>15</integer>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/energy-radar.out</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/energy-radar.err</string>
+</dict>
+</plist>

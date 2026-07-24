@@ -1,0 +1,35 @@
+# systemd unit file for Energy Radar
+#
+# INSTALL (Linux):
+#   1. Edit INSTALL_DIR below to the absolute path of this repo.
+#   2. sudo cp deploy/energy-radar.service /etc/systemd/system/
+#   3. sudo systemctl daemon-reload
+#   4. sudo systemctl enable --now energy-radar
+#
+# MANAGE:
+#   sudo systemctl start|stop|restart|status energy-radar
+#   journalctl -u energy-radar -f
+
+[Unit]
+Description=Energy Radar (docker compose)
+Documentation=https://github.com/mthomas/energy-radar
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# ── Change this to the absolute path where you cloned the repo ──────────────
+WorkingDirectory=/opt/energy-radar
+# ────────────────────────────────────────────────────────────────────────────
+EnvironmentFile=-/opt/energy-radar/.env
+ExecStartPre=docker compose pull --quiet
+ExecStart=docker compose up --remove-orphans
+ExecStop=docker compose down
+Restart=on-failure
+RestartSec=15s
+# Give containers time to shut down cleanly before systemd kills the process
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target
