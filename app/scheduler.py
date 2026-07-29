@@ -234,13 +234,22 @@ async def poll_weather_historical() -> None:
 
 
 async def poll_weather_forecast() -> None:
-    """Refresh the rolling weather forecast for the configured location."""
+    """Refresh the rolling weather forecast for the configured location.
+
+    Also pulls a short past_days window so recent hours are available for the
+    usage model before the Open-Meteo archive publishes them.
+    """
     async with session_scope() as session:
         location = (await session.execute(select(Location).limit(1))).scalar_one_or_none()
         if location is None:
             return
 
-        records = await get_forecast_weather(location.latitude, location.longitude, location.timezone)
+        records = await get_forecast_weather(
+            location.latitude,
+            location.longitude,
+            location.timezone,
+            past_days=7,
+        )
         if not records:
             return
 

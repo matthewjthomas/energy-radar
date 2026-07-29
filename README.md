@@ -46,6 +46,28 @@ There is no login/auth on the web UI — it's meant for local/home network use.
    - Enter your address (geocoded via Open-Meteo, no API key needed).
    - Optionally set a price per unit for cost estimates.
 
+### Reverse proxy / subpath
+
+If you expose the app behind a path prefix (e.g. `https://home.example.com/energy/`), set:
+
+```env
+APP_BASE_PATH=/energy
+```
+
+All pages, API routes, and static assets are then served under that prefix (`/energy/`,
+`/energy/api/...`, `/energy/static/...`). Point your proxy at the container **without**
+stripping the prefix, for example:
+
+```nginx
+location /energy/ {
+  proxy_pass http://127.0.0.1:8000/energy/;
+  proxy_set_header Host $host;
+  proxy_set_header X-Forwarded-Prefix /energy;
+}
+```
+
+`/health` remains available at both `/health` and `{APP_BASE_PATH}/health`.
+
 ## Development
 
 ```sh

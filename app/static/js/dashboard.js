@@ -22,7 +22,7 @@ async function loadSummaryCards(usageBySource, units) {
   const sources = Object.keys(usageBySource);
   if (sources.length === 0) {
     container.innerHTML = `<div class="card"><div class="card-label">No sources enabled</div>
-      <div class="card-sub">Map Home Assistant entities in <a href="/settings">Settings</a>.</div></div>`;
+      <div class="card-sub">Map Home Assistant entities in <a href="${withBase("/settings")}">Settings</a>.</div></div>`;
     return;
   }
   for (const source of sources) {
@@ -64,7 +64,7 @@ async function loadInsights(sources) {
     }
   }
   if (!any) {
-    list.innerHTML = `<div class="insight-item">Still collecting historical data &mdash; insights appear once a few days of usage and weather overlap.</div>`;
+    list.innerHTML = `<div class="insight-item">Still collecting historical data &mdash; insights need about 3 full days of overlapping usage and weather.</div>`;
   }
 }
 
@@ -80,7 +80,7 @@ async function loadForecast(sources, units) {
     status.textContent = "";
     renderForecastChart("forecast-chart", forecast, source, units[source]);
   } catch (e) {
-    status.textContent = "Still collecting historical data \u2014 forecasts appear once there's enough usage/weather history to correlate.";
+    status.textContent = "Still collecting historical data \u2014 forecasts need about 3 full days of overlapping usage and weather.";
     console.warn("Forecast unavailable", e);
   }
 }

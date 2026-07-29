@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from app.config import get_settings
 from app.db import init_db
 from app.routers import api, pages, settings
 from app.scheduler import create_scheduler
@@ -27,15 +28,30 @@ async def lifespan(app: FastAPI):
         scheduler.shutdown(wait=False)
 
 
-app = FastAPI(title="Energy Radar", lifespan=lifespan)
+def create_app() -> FastAPI:
+    cfg = get_settings()
+    base = cfg.base_path
 
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
+    application = FastAPI(title="Energy Radar", lifespan=lifespan)
 
-app.include_router(pages.router)
-app.include_router(api.router)
-app.include_router(settings.router)
+    application.mount(f"{base}/static", StaticFiles(directory="app/static"), name="static")
+
+    # Prefix page/API routers so a reverse proxy can expose the app under e.g. /energy.
+    application.include_router(pages.router, prefix=base)
+    application.include_router(api.router, prefix=base)
+    application.include_router(settings.router, prefix=base)
+
+    @application.get("/health")
+    async def health() -> dict:
+        return {"status": "ok"}
+
+    if base:
+        # Also expose health under the base path for proxies that only forward that prefix.
+        @application.get(f"{base}/health")
+        async def health_prefixed() -> dict:
+            return {"status": "ok"}
+
+    return application
 
 
-@app.get("/health")
-async def health() -> dict:
-    return {"status": "ok"}
+app = create_app()

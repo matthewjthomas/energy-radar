@@ -180,22 +180,32 @@ async def _build_model(session: AsyncSession, source: SourceType):
     end_dt = dt.datetime.now(dt.timezone.utc)
     start_dt = end_dt - dt.timedelta(days=settings.weather_lookback_days)
     readings = await _readings_for_source(session, source, start_dt, end_dt)
-    weather = await _weather_records(session, start_dt, end_dt, include_forecast=False)
+    # Include forecast weather for recent days the Open-Meteo archive hasn't
+    # published yet (typically a 1–5 day lag). The dashboard chart already mixes
+    # the two; training must as well or short-history installs never reach the
+    # minimum overlapping sample count for correlation/forecasts.
+    weather = await _weather_records(session, start_dt, end_dt, include_forecast=True)
 
-    # Drop partial days: if a day's readings don't span at least 20 hours the
-    # sensor wasn't active for the full day (e.g. first day of tracking), and
-    # including it skews the weather/usage regression.
+    # Drop incomplete days. Prefer a ~full day of coverage, but accept any day
+    # that isn't today and has either a wide time span or enough hourly samples
+    # so sparsely updating meters (e.g. water) still contribute.
     tz = _local_tz()
+    today = dt.datetime.now(tz).date()
     times_by_day: dict[dt.date, list[dt.datetime]] = {}
     for ts, _ in readings:
         times_by_day.setdefault(ts.date(), []).append(ts)
-    full_days = {
-        day for day, times in times_by_day.items()
-        if (max(times) - min(times)).total_seconds() >= 20 * 3600
-    }
+    full_days = set()
+    for day, times in times_by_day.items():
+        if day >= today:
+            continue
+        span_hours = (max(times) - min(times)).total_seconds() / 3600
+        if span_hours >= 12 or len(times) >= 12:
+            full_days.add(day)
 
     usage_by_date = {d: v for d, v in aggregate_daily_usage(readings).items() if d in full_days}
     weather_by_date = aggregate_daily_weather(weather)
+    # Never train on future calendar days even if forecast weather exists.
+    weather_by_date = {d: w for d, w in weather_by_date.items() if d < today}
     model = fit_usage_model(usage_by_date, weather_by_date)
     return model, usage_by_date, weather_by_date
 

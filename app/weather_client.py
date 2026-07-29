@@ -106,7 +106,7 @@ async def get_historical_weather(
 
 
 async def get_forecast_weather(
-    latitude: float, longitude: float, timezone: str = "UTC", days: int = 16
+    latitude: float, longitude: float, timezone: str = "UTC", days: int = 16, past_days: int = 0
 ) -> list[dict[str, Any]]:
     params = {
         "latitude": latitude,
@@ -115,6 +115,9 @@ async def get_forecast_weather(
         "forecast_days": min(days, 16),
         "timezone": timezone,
     }
+    if past_days > 0:
+        # Recent "observed" hours without waiting on the archive API's multi-day lag.
+        params["past_days"] = min(past_days, 92)
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.get(FORECAST_URL, params=params)
         resp.raise_for_status()

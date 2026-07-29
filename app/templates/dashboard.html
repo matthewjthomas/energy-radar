@@ -14,7 +14,7 @@
   {% if not ha_configured %}
   <div class="banner banner-warning">
     Home Assistant isn't configured yet. Set <code>HA_URL</code> and <code>HA_TOKEN</code>,
-    then head to <a href="/settings">Settings</a> to map your sensors.
+    then head to <a href="{{ base_path }}/settings">Settings</a> to map your sensors.
   </div>
   {% endif %}
 
@@ -38,6 +38,6 @@
   </section>
 {% endblock %}
 {% block scripts %}
-  <script src="/static/js/charts.js"></script>
-  <script src="/static/js/dashboard.js"></script>
+  <script src="{{ base_path }}/static/js/charts.js"></script>
+  <script src="{{ base_path }}/static/js/dashboard.js"></script>
 {% endblock %}

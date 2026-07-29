@@ -10,18 +10,24 @@ router = APIRouter(tags=["pages"])
 templates = Jinja2Templates(directory="app/templates")
 
 
+def _context(**extra):
+    return {"base_path": get_settings().base_path, **extra}
+
+
 @router.get("/")
 async def dashboard(request: Request):
     return templates.TemplateResponse(
-        request, "dashboard.html", {"ha_configured": get_settings().ha_configured}
+        request,
+        "dashboard.html",
+        _context(ha_configured=get_settings().ha_configured),
     )
 
 
 @router.get("/history")
 async def history(request: Request):
-    return templates.TemplateResponse(request, "history.html", {})
+    return templates.TemplateResponse(request, "history.html", _context())
 
 
 @router.get("/settings")
 async def settings_page(request: Request):
-    return templates.TemplateResponse(request, "settings.html", {})
+    return templates.TemplateResponse(request, "settings.html", _context())

@@ -1,31 +1,42 @@
-// Small fetch helper shared across pages.
+// Small fetch helper shared across pages. Paths are rooted at window.APP_BASE
+// (set from APP_BASE_PATH) so the UI works behind a reverse-proxy prefix.
+function withBase(path) {
+  const base = window.APP_BASE || "";
+  if (!path.startsWith("/")) path = `/${path}`;
+  return `${base}${path}`;
+}
+
 const Api = {
   async get(path) {
-    const resp = await fetch(path);
-    if (!resp.ok) throw new Error(`GET ${path} failed: ${resp.status}`);
+    const url = withBase(path);
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`GET ${url} failed: ${resp.status}`);
     return resp.json();
   },
   async post(path, body) {
-    const resp = await fetch(path, {
+    const url = withBase(path);
+    const resp = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    if (!resp.ok) throw new Error(`POST ${path} failed: ${resp.status}`);
+    if (!resp.ok) throw new Error(`POST ${url} failed: ${resp.status}`);
     return resp.json();
   },
   async put(path, body) {
-    const resp = await fetch(path, {
+    const url = withBase(path);
+    const resp = await fetch(url, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    if (!resp.ok) throw new Error(`PUT ${path} failed: ${resp.status}`);
+    if (!resp.ok) throw new Error(`PUT ${url} failed: ${resp.status}`);
     return resp.json();
   },
   async del(path) {
-    const resp = await fetch(path, { method: "DELETE" });
-    if (!resp.ok) throw new Error(`DELETE ${path} failed: ${resp.status}`);
+    const url = withBase(path);
+    const resp = await fetch(url, { method: "DELETE" });
+    if (!resp.ok) throw new Error(`DELETE ${url} failed: ${resp.status}`);
     return resp.json();
   },
 };

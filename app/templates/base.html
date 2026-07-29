@@ -4,11 +4,12 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{% block title %}Energy Radar{% endblock %}</title>
-  <link rel="stylesheet" href="/static/css/style.css" />
+  <link rel="stylesheet" href="{{ base_path }}/static/css/style.css" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
   <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+  <script>window.APP_BASE = {{ base_path | tojson }};</script>
 </head>
 <body>
   <div class="app-shell">
@@ -17,9 +18,9 @@
         <span class="brand-name">Energy Radar</span>
       </div>
       <nav class="nav">
-        <a href="/" class="nav-link">Dashboard</a>
-        <a href="/history" class="nav-link">History</a>
-        <a href="/settings" class="nav-link">Settings</a>
+        <a href="{{ base_path }}/" class="nav-link">Dashboard</a>
+        <a href="{{ base_path }}/history" class="nav-link">History</a>
+        <a href="{{ base_path }}/settings" class="nav-link">Settings</a>
       </nav>
       <div class="sidebar-footer">
         <div id="temp-unit-toggle" class="unit-toggle">
@@ -33,7 +34,7 @@
       {% block content %}{% endblock %}
     </main>
   </div>
-  <script src="/static/js/api.js"></script>
+  <script src="{{ base_path }}/static/js/api.js"></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>
