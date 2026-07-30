@@ -9,6 +9,10 @@
 # MANAGE:
 #   sudo systemctl start|stop|restart|status energy-radar
 #   journalctl -u energy-radar -f
+#
+# After editing this file on an installed host:
+#   sudo cp deploy/energy-radar.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
 
 [Unit]
 Description=Energy Radar (docker compose)
@@ -28,8 +32,10 @@ ExecStart=docker compose up --remove-orphans
 ExecStop=docker compose down
 Restart=on-failure
 RestartSec=15s
-# Give containers time to shut down cleanly before systemd kills the process
-TimeoutStopSec=60
+# Pi-class hosts can be slow pulling images and waiting for TimescaleDB to pass
+# its healthcheck; allow plenty of time on start/stop.
+TimeoutStartSec=600
+TimeoutStopSec=180
 
 [Install]
 WantedBy=multi-user.target

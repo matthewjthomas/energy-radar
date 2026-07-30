@@ -37,6 +37,31 @@ def aggregate_daily_usage(
     return totals
 
 
+def aggregate_monthly_usage(
+    usage_by_date: dict[dt.date, float],
+) -> dict[tuple[int, int], float]:
+    """Sum daily usage totals into calendar months as (year, month) -> total."""
+    monthly: dict[tuple[int, int], float] = {}
+    for day, value in usage_by_date.items():
+        key = (day.year, day.month)
+        monthly[key] = monthly.get(key, 0.0) + value
+    return monthly
+
+
+def aggregate_monthly_avg_temp(
+    weather_by_date: dict[dt.date, dict[str, float]],
+) -> dict[tuple[int, int], float]:
+    """Average daily temperatures into calendar months as (year, month) -> avg °C."""
+    temps_by_month: dict[tuple[int, int], list[float]] = {}
+    for day, weather in weather_by_date.items():
+        avg_temp = weather.get("avg_temp_c")
+        if avg_temp is None:
+            continue
+        key = (day.year, day.month)
+        temps_by_month.setdefault(key, []).append(avg_temp)
+    return {key: float(np.mean(temps)) for key, temps in temps_by_month.items()}
+
+
 def aggregate_daily_weather(
     records: list[dict],
 ) -> dict[dt.date, dict[str, float]]:

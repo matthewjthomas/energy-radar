@@ -17,6 +17,66 @@ function rangeQuery() {
   return `start=${currentRange.start}&end=${currentRange.end}`;
 }
 
+function formatMonthLabel(year, month) {
+  return new Date(year, month - 1, 1).toLocaleDateString(undefined, {
+    month: "short",
+    year: "numeric",
+  });
+}
+
+async function loadMonthlySummaries(units) {
+  const container = document.getElementById("monthly-summary");
+  let summaries;
+  try {
+    summaries = await Api.get("/api/usage/monthly");
+  } catch (e) {
+    container.innerHTML = `<p class="muted">Unable to load monthly summaries.</p>`;
+    return;
+  }
+
+  if (!summaries.length) {
+    container.innerHTML = `<p class="muted">No monthly data yet.</p>`;
+    return;
+  }
+
+  const sources = [...new Set(summaries.flatMap((row) => Object.keys(row.usage)))].sort();
+  if (sources.length === 0) {
+    container.innerHTML = `<p class="muted">No monthly usage recorded yet.</p>`;
+    return;
+  }
+
+  const headerCells = [
+    "<th>Month</th>",
+    `<th>Avg temp (${tempUnitLabel()})</th>`,
+    ...sources.map(
+      (source) => `<th>${SOURCE_LABELS[source] || source}${units[source] ? ` (${units[source]})` : ""}</th>`
+    ),
+  ];
+
+  const bodyRows = summaries.map((row) => {
+    const temp =
+      row.avg_temp_c != null ? fmtNumber(convertTemp(row.avg_temp_c), 1) : "&mdash;";
+    const usageCells = sources.map((source) => {
+      const value = row.usage[source];
+      return `<td>${value != null ? fmtNumber(value) : "&mdash;"}</td>`;
+    });
+    return `<tr>
+      <th scope="row">${formatMonthLabel(row.year, row.month)}</th>
+      <td>${temp}</td>
+      ${usageCells.join("")}
+    </tr>`;
+  });
+
+  container.innerHTML = `
+    <div class="table-scroll">
+      <table class="data-table monthly-table">
+        <thead><tr>${headerCells.join("")}</tr></thead>
+        <tbody>${bodyRows.join("")}</tbody>
+      </table>
+    </div>
+  `;
+}
+
 async function loadTrends(sources) {
   const list = document.getElementById("trend-list");
   list.innerHTML = "";
@@ -76,6 +136,7 @@ async function refreshHistory() {
     Api.get("/api/sources/units"),
   ]);
   const sources = Object.keys(usageBySource);
+  await loadMonthlySummaries(units);
   await loadEvents();
   renderUsageWeatherChart("usage-weather-chart", usageBySource, weather, cachedEvents, units);
   await loadTrends(sources);
@@ -105,4 +166,5 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   refreshHistory();
+  document.addEventListener("tempunitchange", () => refreshHistory());
 });

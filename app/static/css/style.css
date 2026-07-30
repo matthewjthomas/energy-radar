@@ -203,6 +203,64 @@ button.danger { background: var(--danger); }
 
 .muted { color: var(--muted); }
 
+.section-hint { margin: -4px 0 16px; font-size: 0.85rem; }
+
+.insight-help {
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  font-size: 0.85rem;
+}
+.insight-help summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-weight: 600;
+  list-style-position: outside;
+}
+.insight-help p {
+  margin: 10px 0 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.insight-help strong { color: var(--text); }
+
+.table-scroll { overflow-x: auto; }
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+.data-table th,
+.data-table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  text-align: right;
+  white-space: nowrap;
+}
+.data-table th:first-child,
+.data-table td:first-child,
+.data-table th[scope="row"] {
+  text-align: left;
+}
+.data-table thead th {
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+.data-table tbody tr:last-child th,
+.data-table tbody tr:last-child td {
+  border-bottom: none;
+}
+.monthly-table tbody th[scope="row"] {
+  font-weight: 600;
+  color: var(--text);
+}
+
 .settings-status { font-size: 0.85rem; margin-left: 10px; }
 .settings-status.ok { color: #4caf82; }
 .settings-status.error { color: var(--danger); }

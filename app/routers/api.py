@@ -11,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.analytics import (
     aggregate_daily_usage,
     aggregate_daily_weather,
+    aggregate_monthly_avg_temp,
+    aggregate_monthly_usage,
     detect_trend_shifts,
     evaluate_event_impact,
     fit_usage_model,
@@ -24,6 +26,7 @@ from app.schemas import (
     EventImpact,
     EventMarkerOut,
     ForecastPoint,
+    MonthlySummary,
     TrendShift,
     UsagePoint,
     WeatherPoint,
@@ -171,6 +174,42 @@ async def get_weather(
     start_dt, end_dt = _parse_range(start, end)
     records = await _weather_records(session, start_dt, end_dt)
     return [WeatherPoint(**r) for r in sorted(records, key=lambda r: r["time"])]
+
+
+@router.get("/usage/monthly", response_model=list[MonthlySummary])
+async def get_monthly_usage(session: AsyncSession = Depends(get_session)):
+    """Cumulative usage totals and average temperature for each calendar month."""
+    settings = get_settings()
+    end_dt = dt.datetime.now(dt.timezone.utc)
+    start_dt = end_dt - dt.timedelta(days=settings.weather_lookback_days)
+    sources = await _enabled_sources(session)
+    pricing = await _pricing_map(session)
+
+    usage_by_month: dict[tuple[int, int], dict[str, float]] = {}
+    cost_by_month: dict[tuple[int, int], dict[str, float | None]] = {}
+    for source in sources:
+        readings = await _readings_for_source(session, source, start_dt, end_dt)
+        for (year, month), total in aggregate_monthly_usage(aggregate_daily_usage(readings)).items():
+            usage_by_month.setdefault((year, month), {})[source.value] = total
+            price = pricing.get(source)
+            cost_by_month.setdefault((year, month), {})[source.value] = (
+                total * price if price else None
+            )
+
+    weather = await _weather_records(session, start_dt, end_dt, include_forecast=False)
+    temps_by_month = aggregate_monthly_avg_temp(aggregate_daily_weather(weather))
+
+    months = sorted(set(usage_by_month) | set(temps_by_month), reverse=True)
+    return [
+        MonthlySummary(
+            year=year,
+            month=month,
+            usage=usage_by_month.get((year, month), {}),
+            cost=cost_by_month.get((year, month), {}),
+            avg_temp_c=temps_by_month.get((year, month)),
+        )
+        for year, month in months
+    ]
 
 
 async def _build_model(session: AsyncSession, source: SourceType):

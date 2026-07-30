@@ -124,3 +124,11 @@ class CorrelationResult(BaseModel):
     cdd_coef: float
     r_squared: float
     n_samples: int
+
+
+class MonthlySummary(BaseModel):
+    year: int
+    month: int
+    usage: dict[str, float]
+    cost: dict[str, float | None] = {}
+    avg_temp_c: float | None = None
