@@ -2,6 +2,49 @@
 const _chartInstances = {};
 const _lastUsageWeatherArgs = {};
 
+function _hexToRgba(hex, alpha) {
+  const h = hex.replace("#", "");
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function _solidLegendTooltipPlugins() {
+  return {
+    legend: {
+      labels: {
+        color: "#e7ecf7",
+        usePointStyle: true,
+        pointStyle: "rect",
+        boxWidth: 12,
+        boxHeight: 12,
+      },
+    },
+    tooltip: {
+      usePointStyle: true,
+      boxPadding: 6,
+      callbacks: {
+        labelColor: (item) => ({
+          borderColor: "transparent",
+          backgroundColor: item.dataset.borderColor,
+          borderWidth: 0,
+          borderRadius: 2,
+        }),
+      },
+    },
+  };
+}
+
+function _lineDatasetPointStyle(color) {
+  return {
+    pointStyle: "rect",
+    pointBackgroundColor: color,
+    pointBorderColor: color,
+    pointBorderWidth: 0,
+  };
+}
+
 function _destroyChart(canvasId) {
   if (_chartInstances[canvasId]) {
     _chartInstances[canvasId].destroy();
@@ -58,6 +101,7 @@ function renderUsageWeatherChart(canvasId, usageBySource, weatherPoints, eventMa
     yAxisID: "y1",
     tension: 0.3,
     pointRadius: 2,
+    ..._lineDatasetPointStyle("#e7ecf7"),
   });
 
   const eventLines = (eventMarkers || []).map((e) => ({
@@ -91,7 +135,7 @@ function renderUsageWeatherChart(canvasId, usageBySource, weatherPoints, eventMa
         },
       },
       plugins: {
-        legend: { labels: { color: "#e7ecf7" } },
+        ..._solidLegendTooltipPlugins(),
       },
     },
   });
@@ -105,6 +149,8 @@ function renderForecastChart(canvasId, forecastPoints, source, unit = "") {
   const unitSuffix = unit ? ` (${unit})` : "";
   const labels = forecastPoints.map((p) => p.date);
   const hasTemps = forecastPoints.some((p) => p.high_temp_c != null);
+  const usageColor = SOURCE_COLORS[source] || "#4fd1c5";
+  const tempColor = "#e7ecf7";
   _chartInstances[canvasId] = new Chart(canvas, {
     type: "line",
     data: {
@@ -113,21 +159,23 @@ function renderForecastChart(canvasId, forecastPoints, source, unit = "") {
         {
           label: `Predicted ${SOURCE_LABELS[source] || source} usage${unitSuffix}`,
           data: forecastPoints.map((p) => p.predicted_value),
-          borderColor: SOURCE_COLORS[source] || "#4fd1c5",
-          backgroundColor: "rgba(79, 209, 197, 0.15)",
+          borderColor: usageColor,
+          backgroundColor: _hexToRgba(usageColor, 0.15),
           fill: true,
           tension: 0.3,
           yAxisID: "y",
+          ..._lineDatasetPointStyle(usageColor),
         },
         ...(hasTemps ? [{
           label: `High temp (${tempUnitLabel()})`,
           data: forecastPoints.map((p) => p.high_temp_c != null ? convertTemp(p.high_temp_c) : null),
-          borderColor: "#e7ecf7",
+          borderColor: tempColor,
           backgroundColor: "transparent",
           borderDash: [4, 3],
           tension: 0.3,
           pointRadius: 2,
           yAxisID: "y1",
+          ..._lineDatasetPointStyle(tempColor),
         }] : []),
       ],
     },
@@ -152,7 +200,9 @@ function renderForecastChart(canvasId, forecastPoints, source, unit = "") {
           grid: { drawOnChartArea: false },
         }} : {}),
       },
-      plugins: { legend: { labels: { color: "#e7ecf7" } } },
+      plugins: {
+        ..._solidLegendTooltipPlugins(),
+      },
     },
   });
 }
