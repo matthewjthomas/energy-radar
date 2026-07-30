@@ -17,6 +17,17 @@ from app.weather_client import get_forecast_weather, get_historical_weather
 
 logger = logging.getLogger(__name__)
 
+# Postgres/asyncpg caps bind parameters per statement (~32k–65k depending on
+# build). Chunk large upserts so first-run weather backfills don't fail.
+_INSERT_BATCH_SIZE = 500
+# How many calendar days of archive weather to pull per scheduler tick.
+_WEATHER_BACKFILL_CHUNK_DAYS = 30
+
+
+def _batched(items: list, size: int):
+    for i in range(0, len(items), size):
+        yield items[i : i + size]
+
 
 def _rows_from_history(
     cfg: HAEntityConfig,
@@ -182,9 +193,10 @@ async def poll_ha_readings() -> None:
                 logger.info("Fetched %d long-term-statistics rows for %s", len(rows), cfg.entity_id)
 
             if rows:
-                stmt = pg_insert(Reading).values(rows)
-                stmt = stmt.on_conflict_do_nothing(index_elements=["time", "source_type", "entity_id"])
-                await session.execute(stmt)
+                for batch in _batched(rows, _INSERT_BATCH_SIZE):
+                    stmt = pg_insert(Reading).values(batch)
+                    stmt = stmt.on_conflict_do_nothing(index_elements=["time", "source_type", "entity_id"])
+                    await session.execute(stmt)
 
         await session.commit()
 
@@ -212,25 +224,37 @@ async def poll_weather_historical() -> None:
         if start_date > yesterday:
             return
 
+        # Backfill in chunks so a year+ of hourly rows doesn't exceed Postgres
+        # parameter limits or stall a Pi on first startup.
+        end_date = min(start_date + dt.timedelta(days=_WEATHER_BACKFILL_CHUNK_DAYS - 1), yesterday)
+
         records = await get_historical_weather(
-            location.latitude, location.longitude, start_date, yesterday, location.timezone
+            location.latitude, location.longitude, start_date, end_date, location.timezone
         )
         if not records:
             return
 
-        stmt = pg_insert(WeatherObservation).values(records)
-        stmt = stmt.on_conflict_do_update(
-            index_elements=["time"],
-            set_={
-                "temperature_c": stmt.excluded.temperature_c,
-                "apparent_temperature_c": stmt.excluded.apparent_temperature_c,
-                "humidity_pct": stmt.excluded.humidity_pct,
-                "precipitation_mm": stmt.excluded.precipitation_mm,
-                "wind_speed_kph": stmt.excluded.wind_speed_kph,
-            },
-        )
-        await session.execute(stmt)
+        for batch in _batched(records, _INSERT_BATCH_SIZE):
+            stmt = pg_insert(WeatherObservation).values(batch)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["time"],
+                set_={
+                    "temperature_c": stmt.excluded.temperature_c,
+                    "apparent_temperature_c": stmt.excluded.apparent_temperature_c,
+                    "humidity_pct": stmt.excluded.humidity_pct,
+                    "precipitation_mm": stmt.excluded.precipitation_mm,
+                    "wind_speed_kph": stmt.excluded.wind_speed_kph,
+                },
+            )
+            await session.execute(stmt)
         await session.commit()
+        logger.info(
+            "Stored %d weather observations for %s to %s (%s days remaining to yesterday)",
+            len(records),
+            start_date,
+            end_date,
+            max((yesterday - end_date).days, 0),
+        )
 
 
 async def poll_weather_forecast() -> None:
@@ -257,20 +281,21 @@ async def poll_weather_forecast() -> None:
         for record in records:
             record["generated_at"] = generated_at
 
-        stmt = pg_insert(WeatherForecast).values(records)
-        stmt = stmt.on_conflict_do_update(
-            index_elements=["time"],
-            set_={
-                "generated_at": stmt.excluded.generated_at,
-                "temperature_c": stmt.excluded.temperature_c,
-                "apparent_temperature_c": stmt.excluded.apparent_temperature_c,
-                "humidity_pct": stmt.excluded.humidity_pct,
-                "precipitation_mm": stmt.excluded.precipitation_mm,
-                "precipitation_probability_pct": stmt.excluded.precipitation_probability_pct,
-                "wind_speed_kph": stmt.excluded.wind_speed_kph,
-            },
-        )
-        await session.execute(stmt)
+        for batch in _batched(records, _INSERT_BATCH_SIZE):
+            stmt = pg_insert(WeatherForecast).values(batch)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["time"],
+                set_={
+                    "generated_at": stmt.excluded.generated_at,
+                    "temperature_c": stmt.excluded.temperature_c,
+                    "apparent_temperature_c": stmt.excluded.apparent_temperature_c,
+                    "humidity_pct": stmt.excluded.humidity_pct,
+                    "precipitation_mm": stmt.excluded.precipitation_mm,
+                    "precipitation_probability_pct": stmt.excluded.precipitation_probability_pct,
+                    "wind_speed_kph": stmt.excluded.wind_speed_kph,
+                },
+            )
+            await session.execute(stmt)
         await session.commit()
 
 
