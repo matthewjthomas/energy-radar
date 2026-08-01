@@ -1,11 +1,10 @@
 {% extends "base.html" %}
+{% block page_id %}history{% endblock %}
 {% block title %}History · Energy Radar{% endblock %}
 {% block content %}
   <header class="page-header">
-    <div>
-      <h1>History</h1>
-      <p class="subtitle">Browse any date range and mark changes that may have affected usage.</p>
-    </div>
+    <h1>History</h1>
+    <p class="subtitle">Browse any date range and mark changes that may have affected usage.</p>
     <div class="range-picker">
       <input id="range-input" placeholder="Select date range&hellip;" readonly />
     </div>
@@ -18,7 +17,7 @@
   </section>
 
   <section class="panel">
-    <h2>Usage vs. Weather</h2>
+    <h2>Usage vs. weather</h2>
     <div class="chart-wrap"><canvas id="usage-weather-chart"></canvas></div>
   </section>
 

@@ -42,9 +42,9 @@ const Api = {
 };
 
 const SOURCE_COLORS = {
-  electricity: "#f6c744",
-  gas: "#5b8def",
-  water: "#38bdf8",
+  electricity: "#9a7200",
+  gas: "#3a5585",
+  water: "#2a7080",
 };
 
 const SOURCE_LABELS = {

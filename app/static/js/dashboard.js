@@ -16,30 +16,65 @@ function rangeQuery() {
   return `start=${currentRange.start}&end=${currentRange.end}`;
 }
 
-async function loadSummaryCards(usageBySource, units) {
-  const container = document.getElementById("summary-cards");
-  container.innerHTML = "";
+function formatPeriodLabel(startISO, endISO) {
+  const start = new Date(`${startISO}T12:00:00`);
+  const end = new Date(`${endISO}T12:00:00`);
+  const full = { month: "long", day: "numeric", year: "numeric" };
+  if (startISO === endISO) return start.toLocaleDateString(undefined, full);
+  const sameYear = start.getFullYear() === end.getFullYear();
+  const startFmt = start.toLocaleDateString(
+    undefined,
+    sameYear ? { month: "long", day: "numeric" } : full
+  );
+  return `${startFmt} – ${end.toLocaleDateString(undefined, full)}`;
+}
+
+function proseHighlight(source, text) {
+  return `<span class="prose-highlight ${source}">${text}</span>`;
+}
+
+function loadProseSummary(usageBySource, weather, units) {
+  const period = document.getElementById("prose-period");
+  const summary = document.getElementById("prose-summary");
+  if (!period || !summary) return;
+
+  period.textContent = formatPeriodLabel(currentRange.start, currentRange.end);
+
   const sources = Object.keys(usageBySource);
   if (sources.length === 0) {
-    container.innerHTML = `<div class="card"><div class="card-label">No sources enabled</div>
-      <div class="card-sub">Map Home Assistant entities in <a href="${withBase("/settings")}">Settings</a>.</div></div>`;
+    summary.innerHTML = `No utility sources are mapped yet. Head to <a href="${withBase("/settings")}">Settings</a> to connect Home Assistant sensors.`;
     return;
   }
+
+  const parts = [];
   for (const source of sources) {
     const points = usageBySource[source];
-    const total = points.reduce((a, p) => a + p.value, 0);
-    const cost = points.reduce((a, p) => a + (p.cost || 0), 0);
-    const hasCost = points.some((p) => p.cost !== null && p.cost !== undefined);
+    if (!points.length) continue;
+    const avg = points.reduce((a, p) => a + p.value, 0) / points.length;
     const unit = units[source] ? ` ${units[source]}` : "";
-    const card = document.createElement("div");
-    card.className = `card accent-${source}`;
-    card.innerHTML = `
-      <div class="card-label">${SOURCE_LABELS[source] || source}</div>
-      <div class="card-value">${fmtNumber(total)}${unit}</div>
-      <div class="card-sub">${hasCost ? "$" + fmtNumber(cost, 2) + " estimated" : "total this period"}</div>
-    `;
-    container.appendChild(card);
+    const label = SOURCE_LABELS[source] || source;
+    parts.push(
+      `${label} averaged ${proseHighlight(source, `${fmtNumber(avg)}${unit}`)} per day`
+    );
   }
+
+  let maxTempC = null;
+  for (const p of weather || []) {
+    if (p.temperature_c != null) {
+      maxTempC = maxTempC == null ? p.temperature_c : Math.max(maxTempC, p.temperature_c);
+    }
+  }
+
+  let text = parts.join(". ");
+  if (text) text += ".";
+  if (maxTempC != null) {
+    const warmest = `${fmtNumber(convertTemp(maxTempC), 0)}${tempUnitLabel()}`;
+    text += ` Temperatures reached ${proseHighlight("water", warmest)} on the warmest day in this period.`;
+  }
+  if (!text) {
+    text = "No usage recorded for this date range yet.";
+  }
+  summary.innerHTML = text;
 }
 
 async function loadInsights(sources) {
@@ -57,7 +92,7 @@ async function loadInsights(sources) {
       const item = document.createElement("div");
       item.className = "insight-item";
       const direction = corr.hdd_coef > corr.cdd_coef ? "colder days" : "warmer days";
-      item.innerHTML = `<span>${SOURCE_LABELS[source]} tracks weather with R\u00b2=${fmtNumber(corr.r_squared, 2)} (mostly driven by ${direction})</span>`;
+      item.innerHTML = `${SOURCE_LABELS[source]} tracks weather with R\u00b2=${fmtNumber(corr.r_squared, 2)} (mostly driven by ${direction}).`;
       list.appendChild(item);
     } catch (e) {
       // Not enough overlapping usage/weather history yet for this source.
@@ -77,7 +112,7 @@ async function loadForecast(sources, units) {
   const source = sources[0];
   try {
     const forecast = await Api.get(`/api/forecast/usage?source=${source}&days=14`);
-    status.textContent = "";
+    status.textContent = "Predicted usage for the next 14 days, based on forecast weather.";
     renderForecastChart("forecast-chart", forecast, source, units[source]);
   } catch (e) {
     status.textContent = "Still collecting historical data \u2014 forecasts need about 3 full days of overlapping usage and weather.";
@@ -93,7 +128,7 @@ async function refreshDashboard() {
   ]);
   const sources = Object.keys(usageBySource);
   renderUsageWeatherChart("usage-weather-chart", usageBySource, weather, [], units);
-  await loadSummaryCards(usageBySource, units);
+  loadProseSummary(usageBySource, weather, units);
   await loadInsights(sources);
   await loadForecast(sources, units);
 }

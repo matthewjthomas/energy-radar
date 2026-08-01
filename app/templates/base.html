@@ -4,37 +4,51 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{% block title %}Energy Radar{% endblock %}</title>
+  <script>
+    (function () {
+      var k = "energyRadarTheme";
+      var t = localStorage.getItem(k);
+      document.documentElement.setAttribute("data-theme", t === "light" || t === "dark" ? t : "system");
+    })();
+  </script>
   <link rel="stylesheet" href="{{ base_path }}/static/css/style.css" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
   <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
   <script>window.APP_BASE = {{ base_path | tojson }};</script>
+  <script src="{{ base_path }}/static/js/theme.js"></script>
 </head>
-<body>
-  <div class="app-shell">
-    <aside class="sidebar">
-      <div class="brand">
-        <span class="brand-name">Energy Radar</span>
+<body data-page="{% block page_id %}dashboard{% endblock %}">
+  <header class="top-bar">
+    <div class="brand"><a href="{{ base_path }}/">Energy Radar</a></div>
+    <nav class="top-nav">
+      <a href="{{ base_path }}/" class="nav-link" data-nav="dashboard">Dashboard</a>
+      <a href="{{ base_path }}/history" class="nav-link" data-nav="history">History</a>
+      <a href="{{ base_path }}/settings" class="nav-link" data-nav="settings">Settings</a>
+    </nav>
+    <div class="top-bar-controls">
+      <div id="theme-toggle" class="segmented-toggle" title="Appearance">
+        <button type="button" data-theme="light" aria-label="Light mode">Light</button>
+        <button type="button" data-theme="dark" aria-label="Dark mode">Dark</button>
+        <button type="button" data-theme="system" aria-label="System mode">Auto</button>
       </div>
-      <nav class="nav">
-        <a href="{{ base_path }}/" class="nav-link">Dashboard</a>
-        <a href="{{ base_path }}/history" class="nav-link">History</a>
-        <a href="{{ base_path }}/settings" class="nav-link">Settings</a>
-      </nav>
-      <div class="sidebar-footer">
-        <div id="temp-unit-toggle" class="unit-toggle">
-          <button type="button" data-unit="F">&deg;F</button>
-          <button type="button" data-unit="C">&deg;C</button>
-        </div>
-        <span id="ha-status-pill" class="pill pill-unknown">HA: checking&hellip;</span>
+      <div id="temp-unit-toggle" class="segmented-toggle" title="Temperature unit">
+        <button type="button" data-unit="F">&deg;F</button>
+        <button type="button" data-unit="C">&deg;C</button>
       </div>
-    </aside>
-    <main class="content">
-      {% block content %}{% endblock %}
-    </main>
-  </div>
+      <span id="ha-status-pill" class="pill pill-unknown">HA: checking&hellip;</span>
+    </div>
+  </header>
+  <main class="content">
+    {% block content %}{% endblock %}
+  </main>
   <script src="{{ base_path }}/static/js/api.js"></script>
+  <script>
+    document.querySelectorAll(".nav-link").forEach(function (link) {
+      if (link.dataset.nav === document.body.dataset.page) link.classList.add("active");
+    });
+  </script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

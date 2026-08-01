@@ -1,6 +1,29 @@
 // Shared Chart.js builders for the usage/weather combo chart and forecast chart.
 const _chartInstances = {};
 const _lastUsageWeatherArgs = {};
+const _lastForecastArgs = {};
+
+function _cssVar(name, fallback) {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return value || fallback;
+}
+
+function _chartColors() {
+  return {
+    text: _cssVar("--chart-text", "#1e1e1c"),
+    textMuted: _cssVar("--chart-text-muted", "#3d3d38"),
+    grid: _cssVar("--chart-grid", "#d8d8d4"),
+    tempLine: _cssVar("--chart-temp-line", "#2a7080"),
+    tooltipBg: _cssVar("--chart-tooltip-bg", "#1e1e1c"),
+    tooltipText: _cssVar("--chart-tooltip-text", "#fdfdfb"),
+  };
+}
+
+function _sourceColor(source) {
+  const vars = { electricity: "--electricity", gas: "--gas", water: "--water" };
+  const fromCss = vars[source] ? _cssVar(vars[source], "") : "";
+  return fromCss || SOURCE_COLORS[source] || "#888888";
+}
 
 function _hexToRgba(hex, alpha) {
   const h = hex.replace("#", "");
@@ -10,11 +33,11 @@ function _hexToRgba(hex, alpha) {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-function _solidLegendTooltipPlugins() {
+function _solidLegendTooltipPlugins(colors) {
   return {
     legend: {
       labels: {
-        color: "#e7ecf7",
+        color: colors.text,
         usePointStyle: true,
         pointStyle: "rect",
         boxWidth: 12,
@@ -24,6 +47,9 @@ function _solidLegendTooltipPlugins() {
     tooltip: {
       usePointStyle: true,
       boxPadding: 6,
+      backgroundColor: colors.tooltipBg,
+      titleColor: colors.tooltipText,
+      bodyColor: colors.tooltipText,
       callbacks: {
         labelColor: (item) => ({
           borderColor: "transparent",
@@ -72,12 +98,14 @@ function renderUsageWeatherChart(canvasId, usageBySource, weatherPoints, eventMa
   const canvas = document.getElementById(canvasId);
   if (!canvas) return;
 
+  const colors = _chartColors();
   const tempByDay = _dailyAvgTemp(weatherPoints || []);
   const allDays = new Set(Object.keys(tempByDay));
   for (const points of Object.values(usageBySource)) {
     for (const p of points) allDays.add(p.date);
   }
   const labels = [...allDays].sort();
+  const today = new Date().toISOString().slice(0, 10);
 
   const datasets = [];
   for (const [source, points] of Object.entries(usageBySource)) {
@@ -87,29 +115,22 @@ function renderUsageWeatherChart(canvasId, usageBySource, weatherPoints, eventMa
       type: "bar",
       label: `${SOURCE_LABELS[source] || source}${unitSuffix}`,
       data: labels.map((d) => byDate[d] ?? null),
-      backgroundColor: SOURCE_COLORS[source] || "#888",
+      backgroundColor: _sourceColor(source),
       yAxisID: "y",
-      borderRadius: 4,
+      borderRadius: 3,
     });
   }
   datasets.push({
     type: "line",
     label: `Avg temp (${tempUnitLabel()})`,
     data: labels.map((d) => (tempByDay[d] !== undefined ? convertTemp(tempByDay[d]) : null)),
-    borderColor: "#e7ecf7",
+    borderColor: colors.tempLine,
     backgroundColor: "transparent",
     yAxisID: "y1",
     tension: 0.3,
     pointRadius: 2,
-    ..._lineDatasetPointStyle("#e7ecf7"),
+    ..._lineDatasetPointStyle(colors.tempLine),
   });
-
-  const eventLines = (eventMarkers || []).map((e) => ({
-    type: "line",
-    xMin: e.event_date,
-    xMax: e.event_date,
-    label: e.title,
-  }));
 
   _chartInstances[canvasId] = new Chart(canvas, {
     data: { labels, datasets },
@@ -118,39 +139,46 @@ function renderUsageWeatherChart(canvasId, usageBySource, weatherPoints, eventMa
       maintainAspectRatio: false,
       interaction: { mode: "index", intersect: false },
       scales: {
-        y: { position: "left", title: { display: true, text: "Usage" }, grid: { color: "#2a3550" } },
+        y: {
+          position: "left",
+          title: { display: true, text: "Usage", color: colors.textMuted },
+          ticks: { color: colors.textMuted },
+          grid: { color: colors.grid },
+        },
         y1: {
           position: "right",
-          title: { display: true, text: tempUnitLabel() },
-          grid: { drawOnChartArea: false },
+          title: { display: true, text: tempUnitLabel(), color: colors.textMuted },
+          ticks: { color: colors.textMuted },
+          grid: { drawOnChartArea: false, color: colors.grid },
         },
         x: {
-          grid: { color: "#2a3550" },
           ticks: {
-            color: (ctx) => {
-              const today = new Date().toISOString().slice(0, 10);
-              return labels[ctx.index] === today ? "#e7ecf7" : "#8b96ad";
-            },
+            color: (ctx) => (labels[ctx.index] === today ? colors.text : colors.textMuted),
           },
+          grid: { color: colors.grid },
         },
       },
       plugins: {
-        ..._solidLegendTooltipPlugins(),
+        ..._solidLegendTooltipPlugins(colors),
       },
     },
   });
 }
 
 function renderForecastChart(canvasId, forecastPoints, source, unit = "") {
+  _lastForecastArgs[canvasId] = { forecastPoints, source, unit };
   _destroyChart(canvasId);
   const canvas = document.getElementById(canvasId);
   if (!canvas) return;
 
+  const colors = _chartColors();
   const unitSuffix = unit ? ` (${unit})` : "";
   const labels = forecastPoints.map((p) => p.date);
   const hasTemps = forecastPoints.some((p) => p.high_temp_c != null);
-  const usageColor = SOURCE_COLORS[source] || "#4fd1c5";
-  const tempColor = "#e7ecf7";
+  const usageColor = _sourceColor(source);
+  const tempColor = colors.tempLine;
+  const today = new Date().toISOString().slice(0, 10);
+
   _chartInstances[canvasId] = new Chart(canvas, {
     type: "line",
     data: {
@@ -168,7 +196,7 @@ function renderForecastChart(canvasId, forecastPoints, source, unit = "") {
         },
         ...(hasTemps ? [{
           label: `High temp (${tempUnitLabel()})`,
-          data: forecastPoints.map((p) => p.high_temp_c != null ? convertTemp(p.high_temp_c) : null),
+          data: forecastPoints.map((p) => (p.high_temp_c != null ? convertTemp(p.high_temp_c) : null)),
           borderColor: tempColor,
           backgroundColor: "transparent",
           borderDash: [4, 3],
@@ -185,33 +213,45 @@ function renderForecastChart(canvasId, forecastPoints, source, unit = "") {
       interaction: { mode: "index", intersect: false },
       scales: {
         x: {
-          grid: { color: "#2a3550" },
           ticks: {
-            color: (ctx) => {
-              const today = new Date().toISOString().slice(0, 10);
-              return labels[ctx.index] === today ? "#e7ecf7" : "#8b96ad";
-            },
+            color: (ctx) => (labels[ctx.index] === today ? colors.text : colors.textMuted),
           },
+          grid: { color: colors.grid },
         },
-        y: { grid: { color: "#2a3550" } },
-        ...(hasTemps ? { y1: {
-          position: "right",
-          title: { display: true, text: tempUnitLabel() },
-          grid: { drawOnChartArea: false },
-        }} : {}),
+        y: {
+          ticks: { color: colors.textMuted },
+          title: { display: true, text: "Usage", color: colors.textMuted },
+          grid: { color: colors.grid },
+        },
+        ...(hasTemps ? {
+          y1: {
+            position: "right",
+            title: { display: true, text: tempUnitLabel(), color: colors.textMuted },
+            ticks: { color: colors.textMuted },
+            grid: { drawOnChartArea: false, color: colors.grid },
+          },
+        } : {}),
       },
       plugins: {
-        ..._solidLegendTooltipPlugins(),
+        ..._solidLegendTooltipPlugins(colors),
       },
     },
   });
 }
 
-// Re-render any already-drawn usage/weather charts (with their last data) when
-// the user toggles between Fahrenheit and Celsius, without refetching from the API.
-document.addEventListener("tempunitchange", () => {
+function _rerenderAllCharts() {
   for (const [canvasId, args] of Object.entries(_lastUsageWeatherArgs)) {
     renderUsageWeatherChart(canvasId, args.usageBySource, args.weatherPoints, args.eventMarkers, args.units);
   }
-});
+  for (const [canvasId, args] of Object.entries(_lastForecastArgs)) {
+    renderForecastChart(canvasId, args.forecastPoints, args.source, args.unit);
+  }
+}
 
+document.addEventListener("tempunitchange", _rerenderAllCharts);
+document.addEventListener("themechange", _rerenderAllCharts);
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+  if (document.documentElement.getAttribute("data-theme") === "system") {
+    _rerenderAllCharts();
+  }
+});
