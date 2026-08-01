@@ -74,6 +74,8 @@ async function loadThermostatConfig() {
   const container = document.getElementById("thermostat-config-list");
   const status = document.getElementById("thermostat-status");
   const editPanel = document.getElementById("thermostat-edit-panel");
+  if (!container || !status) return;
+
   let config;
   try {
     config = await Api.get("/api/settings/thermostat");
@@ -83,16 +85,20 @@ async function loadThermostatConfig() {
 
   container.innerHTML = "";
   if (!config) {
-    editPanel.hidden = true;
+    if (editPanel) editPanel.hidden = true;
     status.textContent = "No thermostat mapped yet. Discover sensors above and add one.";
     return;
   }
 
-  editPanel.hidden = false;
-  document.getElementById("thermostat-heating-fuel").value = config.heating_fuel;
-  document.getElementById("thermostat-cooling-fuel").value = config.cooling_fuel;
-  document.getElementById("thermostat-gas-fraction").value = config.heating_gas_fraction;
-  document.getElementById("thermostat-enabled").checked = config.enabled;
+  if (editPanel) editPanel.hidden = false;
+  const heatingFuel = document.getElementById("thermostat-heating-fuel");
+  const coolingFuel = document.getElementById("thermostat-cooling-fuel");
+  const gasFraction = document.getElementById("thermostat-gas-fraction");
+  const enabled = document.getElementById("thermostat-enabled");
+  if (heatingFuel) heatingFuel.value = config.heating_fuel;
+  if (coolingFuel) coolingFuel.value = config.cooling_fuel;
+  if (gasFraction) gasFraction.value = config.heating_gas_fraction;
+  if (enabled) enabled.checked = config.enabled;
   status.textContent = "";
 
   const row = document.createElement("div");
@@ -122,6 +128,7 @@ async function loadThermostatConfig() {
 
 async function loadDiscovered() {
   const container = document.getElementById("discovered-list");
+  const status = document.getElementById("thermostat-status");
   container.innerHTML = `<div class="insight-item">Loading&hellip;</div>`;
   let existingThermostat = null;
   try {
@@ -138,17 +145,17 @@ async function loadDiscovered() {
     }
     for (const entity of entities) {
       const row = document.createElement("div");
-      row.className = "insight-item";
+      row.className = "discover-row";
       if (entity.entity_kind === "climate") {
         row.innerHTML = `
           <span>${entity.friendly_name}<br/><span class="muted">${entity.entity_id} &middot; thermostat</span></span>
-          <span style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <span class="discover-actions">
             <select class="heating-fuel-select">${heatingFuelOptions()}</select>
             <select class="cooling-fuel-select">
               <option value="electric">Electric cooling</option>
               <option value="unknown">Unknown cooling</option>
             </select>
-            <button data-entity="${entity.entity_id}" data-name="${entity.friendly_name}">Add</button>
+            <button type="button" data-entity="${entity.entity_id}" data-name="${entity.friendly_name}">Add thermostat</button>
           </span>
         `;
         const addBtn = row.querySelector("button");
@@ -156,38 +163,37 @@ async function loadDiscovered() {
           addBtn.disabled = true;
           addBtn.textContent = "Mapped";
         }
-        addBtn.addEventListener("click", async (e) => {
-          const btn = e.target;
-          btn.disabled = true;
-          btn.textContent = "Adding…";
+        addBtn.addEventListener("click", async () => {
+          addBtn.disabled = true;
+          addBtn.textContent = "Adding…";
           try {
             await saveThermostat({
-              entity_id: btn.dataset.entity,
-              friendly_name: btn.dataset.name,
+              entity_id: addBtn.dataset.entity,
+              friendly_name: addBtn.dataset.name,
               heating_fuel: row.querySelector(".heating-fuel-select").value,
               cooling_fuel: row.querySelector(".cooling-fuel-select").value,
               heating_gas_fraction: 0.5,
               enabled: true,
             });
-            document.getElementById("thermostat-status").textContent =
-              "Thermostat added. Historical readings will sync on the next poll.";
+            if (status) status.textContent = "Thermostat added. Historical readings will sync on the next poll.";
             await loadDiscovered();
           } catch (err) {
-            btn.disabled = false;
-            btn.textContent = "Add";
-            document.getElementById("thermostat-status").textContent = "Could not add thermostat.";
+            addBtn.disabled = false;
+            addBtn.textContent = "Add thermostat";
+            if (status) status.textContent = "Could not add thermostat.";
+            console.warn("Thermostat add failed", err);
           }
         });
       } else {
         row.innerHTML = `
           <span>${entity.friendly_name}<br/><span class="muted">${entity.entity_id} &middot; ${entity.unit || ""}</span></span>
-          <span style="display:flex; gap:8px; align-items:center;">
+          <span class="discover-actions">
             <select class="source-select">
               <option value="electricity">Electricity</option>
               <option value="gas">Gas</option>
               <option value="water">Water</option>
             </select>
-            <button data-entity="${entity.entity_id}" data-unit="${entity.unit || ""}" data-name="${entity.friendly_name}">Add</button>
+            <button type="button" data-entity="${entity.entity_id}" data-unit="${entity.unit || ""}" data-name="${entity.friendly_name}">Add</button>
           </span>
         `;
         row.querySelector("button").addEventListener("click", async (e) => {
@@ -239,89 +245,105 @@ document.addEventListener("DOMContentLoaded", () => {
   loadLocation();
   loadPricing();
 
-  document.getElementById("discover-btn").addEventListener("click", loadDiscovered);
+  const discoverBtn = document.getElementById("discover-btn");
+  if (discoverBtn) discoverBtn.addEventListener("click", loadDiscovered);
 
-  document.getElementById("thermostat-form").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const status = document.getElementById("thermostat-status");
-    status.textContent = "Saving…";
-    try {
-      const current = await Api.get("/api/settings/thermostat");
-      if (!current) {
-        status.textContent = "Add a thermostat from Discover sensors first.";
-        return;
-      }
-      await saveThermostat({
-        entity_id: current.entity_id,
-        friendly_name: current.friendly_name,
-        heating_fuel: document.getElementById("thermostat-heating-fuel").value,
-        cooling_fuel: document.getElementById("thermostat-cooling-fuel").value,
-        heating_gas_fraction: parseFloat(document.getElementById("thermostat-gas-fraction").value),
-        enabled: document.getElementById("thermostat-enabled").checked,
-      });
-      status.textContent = "Thermostat settings saved.";
-    } catch (err) {
-      status.textContent = "Could not save thermostat configuration.";
-    }
-  });
-
-  document.getElementById("location-form").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const address = document.getElementById("address-input").value;
-    const status = document.getElementById("location-status");
-    status.textContent = "Geocoding...";
-    try {
-      const location = await Api.post("/api/settings/location", { address });
-      status.textContent = `Saved: ${location.address}`;
-    } catch (err) {
-      status.textContent = "Could not geocode that address.";
-    }
-  });
-
-  document.getElementById("pricing-form").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const btn = e.submitter || document.querySelector("#pricing-form button[type=submit]");
-    const status = document.getElementById("pricing-status");
-    const originalText = btn ? btn.textContent : null;
-    try {
-      if (btn) btn.disabled = true;
-      for (const source of ["electricity", "gas", "water"]) {
-        const field = document.getElementById(`price-${source}`);
-        if (field.value === "") continue;
-        await Api.post("/api/settings/pricing", {
-          source_type: source,
-          price_per_unit: parseFloat(field.value),
-          currency: "USD",
+  const thermostatForm = document.getElementById("thermostat-form");
+  if (thermostatForm) {
+    thermostatForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const status = document.getElementById("thermostat-status");
+      if (!status) return;
+      status.textContent = "Saving…";
+      try {
+        const current = await Api.get("/api/settings/thermostat");
+        if (!current) {
+          status.textContent = "Add a thermostat from Discover sensors first.";
+          return;
+        }
+        await saveThermostat({
+          entity_id: current.entity_id,
+          friendly_name: current.friendly_name,
+          heating_fuel: document.getElementById("thermostat-heating-fuel")?.value || current.heating_fuel,
+          cooling_fuel: document.getElementById("thermostat-cooling-fuel")?.value || current.cooling_fuel,
+          heating_gas_fraction: parseFloat(
+            document.getElementById("thermostat-gas-fraction")?.value || current.heating_gas_fraction
+          ),
+          enabled: document.getElementById("thermostat-enabled")?.checked ?? current.enabled,
         });
+        status.textContent = "Thermostat settings saved.";
+      } catch (err) {
+        status.textContent = "Could not save thermostat configuration.";
       }
-      if (status) { status.textContent = "Saved!"; status.className = "settings-status ok"; }
-    } catch (err) {
-      if (status) { status.textContent = "Failed to save prices."; status.className = "settings-status error"; }
-    } finally {
-      if (btn) { btn.disabled = false; btn.textContent = originalText; }
-      if (status) setTimeout(() => { status.textContent = ""; status.className = "settings-status"; }, 3000);
-    }
-  });
+    });
+  }
 
-  document.getElementById("refresh-btn").addEventListener("click", async (e) => {
-    const btn = e.currentTarget;
-    const status = document.getElementById("refresh-status");
-    btn.disabled = true;
-    btn.textContent = "Refreshing…";
-    status.textContent = "";
-    status.className = "settings-status";
-    const minDelay = new Promise((r) => setTimeout(r, 1500));
-    try {
-      await Promise.all([Api.post("/api/settings/maintenance/refresh", {}), minDelay]);
-      status.textContent = "Done — data is updating in the background.";
-      status.className = "settings-status ok";
-    } catch (err) {
-      status.textContent = "Refresh failed.";
-      status.className = "settings-status error";
-    } finally {
-      btn.disabled = false;
-      btn.textContent = "Refresh data now";
-      setTimeout(() => { status.textContent = ""; status.className = "settings-status"; }, 5000);
-    }
-  });
+  const locationForm = document.getElementById("location-form");
+  if (locationForm) {
+    locationForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const address = document.getElementById("address-input").value;
+      const status = document.getElementById("location-status");
+      status.textContent = "Geocoding...";
+      try {
+        const location = await Api.post("/api/settings/location", { address });
+        status.textContent = `Saved: ${location.address}`;
+      } catch (err) {
+        status.textContent = "Could not geocode that address.";
+      }
+    });
+  }
+
+  const pricingForm = document.getElementById("pricing-form");
+  if (pricingForm) {
+    pricingForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const btn = e.submitter || document.querySelector("#pricing-form button[type=submit]");
+      const status = document.getElementById("pricing-status");
+      const originalText = btn ? btn.textContent : null;
+      try {
+        if (btn) btn.disabled = true;
+        for (const source of ["electricity", "gas", "water"]) {
+          const field = document.getElementById(`price-${source}`);
+          if (field.value === "") continue;
+          await Api.post("/api/settings/pricing", {
+            source_type: source,
+            price_per_unit: parseFloat(field.value),
+            currency: "USD",
+          });
+        }
+        if (status) { status.textContent = "Saved!"; status.className = "settings-status ok"; }
+      } catch (err) {
+        if (status) { status.textContent = "Failed to save prices."; status.className = "settings-status error"; }
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = originalText; }
+        if (status) setTimeout(() => { status.textContent = ""; status.className = "settings-status"; }, 3000);
+      }
+    });
+  }
+
+  const refreshBtn = document.getElementById("refresh-btn");
+  if (refreshBtn) {
+    refreshBtn.addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      const status = document.getElementById("refresh-status");
+      btn.disabled = true;
+      btn.textContent = "Refreshing…";
+      status.textContent = "";
+      status.className = "settings-status";
+      const minDelay = new Promise((r) => setTimeout(r, 1500));
+      try {
+        await Promise.all([Api.post("/api/settings/maintenance/refresh", {}), minDelay]);
+        status.textContent = "Done — data is updating in the background.";
+        status.className = "settings-status ok";
+      } catch (err) {
+        status.textContent = "Refresh failed.";
+        status.className = "settings-status error";
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Refresh data now";
+        setTimeout(() => { status.textContent = ""; status.className = "settings-status"; }, 5000);
+      }
+    });
+  }
 });
