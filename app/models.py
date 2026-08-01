@@ -115,6 +115,7 @@ class ThermostatReading(Base):
     hvac_action: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
 
+class PricingConfig(Base):
     """Optional price per unit so usage can be converted into an estimated cost."""
 
     __tablename__ = "pricing_configs"
