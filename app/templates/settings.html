@@ -23,47 +23,40 @@
   <section class="panel">
     <h2>Thermostat &amp; HVAC</h2>
     <p class="muted">
-      Map your thermostat to improve forecasts. Set heating and cooling fuel so estimates route
+      Discover your thermostat above, then set heating and cooling fuel so estimates route
       to the right utility when a meter is missing.
     </p>
-    <form id="thermostat-form" class="stacked-form">
-      <label>
-        Entity ID
-        <input type="text" id="thermostat-entity-id" placeholder="climate.living_room" required />
-      </label>
-      <label>
-        Friendly name
-        <input type="text" id="thermostat-friendly-name" placeholder="Living room thermostat" />
-      </label>
-      <label>
-        Heating fuel
-        <select id="thermostat-heating-fuel">
-          <option value="unknown">Unknown</option>
-          <option value="electric">Electric</option>
-          <option value="gas">Gas</option>
-          <option value="heat_pump">Heat pump (electric)</option>
-          <option value="dual">Dual (gas + electric)</option>
-        </select>
-      </label>
-      <label>
-        Cooling fuel
-        <select id="thermostat-cooling-fuel">
-          <option value="electric">Electric</option>
-          <option value="unknown">Unknown</option>
-        </select>
-      </label>
-      <label>
-        Gas share of heating (dual fuel only)
-        <input type="number" id="thermostat-gas-fraction" min="0" max="1" step="0.05" value="0.5" />
-      </label>
-      <label class="muted">
-        <input type="checkbox" id="thermostat-enabled" checked /> enabled
-      </label>
-      <span>
-        <button type="submit">Save thermostat</button>
-        <button type="button" id="thermostat-remove-btn" class="secondary">Remove</button>
-      </span>
-    </form>
+    <div id="thermostat-config-list" class="insights-list"></div>
+    <details id="thermostat-edit-panel" class="insight-help" hidden>
+      <summary>Edit heating/cooling fuel</summary>
+      <form id="thermostat-form" class="stacked-form">
+        <label>
+          Heating fuel
+          <select id="thermostat-heating-fuel">
+            <option value="unknown">Unknown</option>
+            <option value="electric">Electric</option>
+            <option value="gas">Gas</option>
+            <option value="heat_pump">Heat pump (electric)</option>
+            <option value="dual">Dual (gas + electric)</option>
+          </select>
+        </label>
+        <label>
+          Cooling fuel
+          <select id="thermostat-cooling-fuel">
+            <option value="electric">Electric</option>
+            <option value="unknown">Unknown</option>
+          </select>
+        </label>
+        <label>
+          Gas share of heating (dual fuel only)
+          <input type="number" id="thermostat-gas-fraction" min="0" max="1" step="0.05" value="0.5" />
+        </label>
+        <label class="muted">
+          <input type="checkbox" id="thermostat-enabled" checked /> enabled
+        </label>
+        <button type="submit">Save changes</button>
+      </form>
+    </details>
     <p id="thermostat-status" class="muted"></p>
   </section>
 

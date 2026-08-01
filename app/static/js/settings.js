@@ -1,5 +1,19 @@
 // Settings page logic: HA connection, entity mapping, location, and pricing.
 
+const HEATING_FUEL_LABELS = {
+  unknown: "Unknown",
+  electric: "Electric",
+  gas: "Gas",
+  heat_pump: "Heat pump",
+  dual: "Dual fuel",
+};
+
+function heatingFuelOptions(selected = "unknown") {
+  return Object.entries(HEATING_FUEL_LABELS)
+    .map(([value, label]) => `<option value="${value}" ${value === selected ? "selected" : ""}>${label}</option>`)
+    .join("");
+}
+
 async function loadHaStatus() {
   const line = document.getElementById("ha-status-line");
   try {
@@ -51,9 +65,70 @@ async function loadEntityConfigs() {
   }
 }
 
+async function saveThermostat(payload) {
+  await Api.post("/api/settings/thermostat", payload);
+  await loadThermostatConfig();
+}
+
+async function loadThermostatConfig() {
+  const container = document.getElementById("thermostat-config-list");
+  const status = document.getElementById("thermostat-status");
+  const editPanel = document.getElementById("thermostat-edit-panel");
+  let config;
+  try {
+    config = await Api.get("/api/settings/thermostat");
+  } catch (e) {
+    config = null;
+  }
+
+  container.innerHTML = "";
+  if (!config) {
+    editPanel.hidden = true;
+    status.textContent = "No thermostat mapped yet. Discover sensors above and add one.";
+    return;
+  }
+
+  editPanel.hidden = false;
+  document.getElementById("thermostat-heating-fuel").value = config.heating_fuel;
+  document.getElementById("thermostat-cooling-fuel").value = config.cooling_fuel;
+  document.getElementById("thermostat-gas-fraction").value = config.heating_gas_fraction;
+  document.getElementById("thermostat-enabled").checked = config.enabled;
+  status.textContent = "";
+
+  const row = document.createElement("div");
+  row.className = "entity-row";
+  row.innerHTML = `
+    <strong>Thermostat</strong>
+    <span>${config.friendly_name || config.entity_id}<br/><span class="muted">${config.entity_id} &middot; heat: ${HEATING_FUEL_LABELS[config.heating_fuel] || config.heating_fuel}, cool: ${config.cooling_fuel}</span></span>
+    <label class="muted"><input type="checkbox" ${config.enabled ? "checked" : ""} class="toggle-thermostat-enabled" /> enabled</label>
+    <button type="button" class="secondary thermostat-remove-btn">Remove</button>
+  `;
+  row.querySelector(".toggle-thermostat-enabled").addEventListener("change", async (e) => {
+    await saveThermostat({
+      entity_id: config.entity_id,
+      friendly_name: config.friendly_name,
+      heating_fuel: config.heating_fuel,
+      cooling_fuel: config.cooling_fuel,
+      heating_gas_fraction: config.heating_gas_fraction,
+      enabled: e.target.checked,
+    });
+  });
+  row.querySelector(".thermostat-remove-btn").addEventListener("click", async () => {
+    await Api.del("/api/settings/thermostat");
+    await loadThermostatConfig();
+  });
+  container.appendChild(row);
+}
+
 async function loadDiscovered() {
   const container = document.getElementById("discovered-list");
   container.innerHTML = `<div class="insight-item">Loading&hellip;</div>`;
+  let existingThermostat = null;
+  try {
+    existingThermostat = await Api.get("/api/settings/thermostat");
+  } catch (e) {
+    existingThermostat = null;
+  }
   try {
     const entities = await Api.get("/api/settings/ha/discover");
     container.innerHTML = "";
@@ -67,15 +142,41 @@ async function loadDiscovered() {
       if (entity.entity_kind === "climate") {
         row.innerHTML = `
           <span>${entity.friendly_name}<br/><span class="muted">${entity.entity_id} &middot; thermostat</span></span>
-          <button data-entity="${entity.entity_id}" data-name="${entity.friendly_name}">Use as thermostat</button>
+          <span style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <select class="heating-fuel-select">${heatingFuelOptions()}</select>
+            <select class="cooling-fuel-select">
+              <option value="electric">Electric cooling</option>
+              <option value="unknown">Unknown cooling</option>
+            </select>
+            <button data-entity="${entity.entity_id}" data-name="${entity.friendly_name}">Add</button>
+          </span>
         `;
-        row.querySelector("button").addEventListener("click", async (e) => {
+        const addBtn = row.querySelector("button");
+        if (existingThermostat) {
+          addBtn.disabled = true;
+          addBtn.textContent = "Mapped";
+        }
+        addBtn.addEventListener("click", async (e) => {
           const btn = e.target;
-          document.getElementById("thermostat-entity-id").value = btn.dataset.entity;
-          document.getElementById("thermostat-friendly-name").value = btn.dataset.name;
-          document.getElementById("thermostat-status").textContent =
-            "Thermostat fields filled — choose heating/cooling fuel and click Save thermostat.";
-          document.getElementById("thermostat-form").scrollIntoView({ behavior: "smooth", block: "start" });
+          btn.disabled = true;
+          btn.textContent = "Adding…";
+          try {
+            await saveThermostat({
+              entity_id: btn.dataset.entity,
+              friendly_name: btn.dataset.name,
+              heating_fuel: row.querySelector(".heating-fuel-select").value,
+              cooling_fuel: row.querySelector(".cooling-fuel-select").value,
+              heating_gas_fraction: 0.5,
+              enabled: true,
+            });
+            document.getElementById("thermostat-status").textContent =
+              "Thermostat added. Historical readings will sync on the next poll.";
+            await loadDiscovered();
+          } catch (err) {
+            btn.disabled = false;
+            btn.textContent = "Add";
+            document.getElementById("thermostat-status").textContent = "Could not add thermostat.";
+          }
         });
       } else {
         row.innerHTML = `
@@ -131,30 +232,10 @@ async function loadPricing() {
   }
 }
 
-async function loadThermostat() {
-  const status = document.getElementById("thermostat-status");
-  try {
-    const config = await Api.get("/api/settings/thermostat");
-    if (!config) {
-      status.textContent = "No thermostat mapped yet.";
-      return;
-    }
-    document.getElementById("thermostat-entity-id").value = config.entity_id;
-    document.getElementById("thermostat-friendly-name").value = config.friendly_name || "";
-    document.getElementById("thermostat-heating-fuel").value = config.heating_fuel;
-    document.getElementById("thermostat-cooling-fuel").value = config.cooling_fuel;
-    document.getElementById("thermostat-gas-fraction").value = config.heating_gas_fraction;
-    document.getElementById("thermostat-enabled").checked = config.enabled;
-    status.textContent = `Saved: ${config.friendly_name || config.entity_id}`;
-  } catch (e) {
-    status.textContent = "";
-  }
-}
-
 document.addEventListener("DOMContentLoaded", () => {
   loadHaStatus();
   loadEntityConfigs();
-  loadThermostat();
+  loadThermostatConfig();
   loadLocation();
   loadPricing();
 
@@ -165,26 +246,23 @@ document.addEventListener("DOMContentLoaded", () => {
     const status = document.getElementById("thermostat-status");
     status.textContent = "Saving…";
     try {
-      await Api.post("/api/settings/thermostat", {
-        entity_id: document.getElementById("thermostat-entity-id").value.trim(),
-        friendly_name: document.getElementById("thermostat-friendly-name").value.trim() || null,
+      const current = await Api.get("/api/settings/thermostat");
+      if (!current) {
+        status.textContent = "Add a thermostat from Discover sensors first.";
+        return;
+      }
+      await saveThermostat({
+        entity_id: current.entity_id,
+        friendly_name: current.friendly_name,
         heating_fuel: document.getElementById("thermostat-heating-fuel").value,
         cooling_fuel: document.getElementById("thermostat-cooling-fuel").value,
         heating_gas_fraction: parseFloat(document.getElementById("thermostat-gas-fraction").value),
         enabled: document.getElementById("thermostat-enabled").checked,
       });
-      status.textContent = "Thermostat saved. Historical readings will sync on the next poll.";
+      status.textContent = "Thermostat settings saved.";
     } catch (err) {
       status.textContent = "Could not save thermostat configuration.";
     }
-  });
-
-  document.getElementById("thermostat-remove-btn").addEventListener("click", async () => {
-    await Api.del("/api/settings/thermostat");
-    document.getElementById("thermostat-form").reset();
-    document.getElementById("thermostat-enabled").checked = true;
-    document.getElementById("thermostat-gas-fraction").value = "0.5";
-    document.getElementById("thermostat-status").textContent = "Thermostat removed.";
   });
 
   document.getElementById("location-form").addEventListener("submit", async (e) => {

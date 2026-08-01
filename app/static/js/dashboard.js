@@ -53,6 +53,7 @@ function forecastableSources(usageBySource, hvac) {
   return [...sources];
 }
 
+function proseHighlight(source, text) {
   return `<span class="prose-highlight ${source}">${text}</span>`;
 }
 
