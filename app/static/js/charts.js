@@ -149,6 +149,7 @@ function renderUsageWeatherChart(canvasId, usageBySource, weatherPoints, eventMa
     data: labels.map((d) => (tempByDay[d] !== undefined ? convertTemp(tempByDay[d]) : null)),
     borderColor: colors.tempLine,
     backgroundColor: "transparent",
+    borderDash: [4, 3],
     yAxisID: "y1",
     tension: 0.3,
     pointRadius: 2,
