@@ -8,8 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.db import get_session
 from app.ha_client import HomeAssistantClient
-from app.models import EventMarker, HAEntityConfig, Location, PricingConfig
-from app.scheduler import poll_ha_readings, poll_weather_forecast, poll_weather_historical
+from app.models import EventMarker, HAEntityConfig, Location, PricingConfig, ThermostatConfig
+from app.scheduler import poll_ha_readings, poll_thermostat_readings, poll_weather_forecast, poll_weather_historical
 from app.schemas import (
     DiscoveredEntity,
     EventMarkerIn,
@@ -20,6 +20,8 @@ from app.schemas import (
     LocationOut,
     PricingConfigIn,
     PricingConfigOut,
+    ThermostatConfigIn,
+    ThermostatConfigOut,
 )
 from app.weather_client import geocode_address, resolve_timezone
 
@@ -42,8 +44,9 @@ async def ha_discover_entities() -> list[DiscoveredEntity]:
     if not settings.ha_configured:
         raise HTTPException(400, "Home Assistant is not configured (HA_URL/HA_TOKEN env vars).")
     client = HomeAssistantClient(settings.ha_url, settings.ha_token)
-    entities = await client.list_sensor_entities()
-    return [DiscoveredEntity(**e) for e in entities]
+    sensors = await client.list_sensor_entities()
+    climates = await client.list_climate_entities()
+    return [DiscoveredEntity(**e) for e in sensors + climates]
 
 
 @router.get("/ha/entities", response_model=list[HAEntityConfigOut])
@@ -88,6 +91,42 @@ async def update_entity_config(
 @router.delete("/ha/entities/{config_id}")
 async def delete_entity_config(config_id: int, session: AsyncSession = Depends(get_session)):
     await session.execute(delete(HAEntityConfig).where(HAEntityConfig.id == config_id))
+    await session.commit()
+    return {"ok": True}
+
+
+@router.get("/thermostat", response_model=ThermostatConfigOut | None)
+async def get_thermostat_config(session: AsyncSession = Depends(get_session)):
+    result = await session.execute(select(ThermostatConfig).limit(1))
+    return result.scalar_one_or_none()
+
+
+@router.post("/thermostat", response_model=ThermostatConfigOut)
+async def upsert_thermostat_config(
+    payload: ThermostatConfigIn,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+):
+    if not 0.0 <= payload.heating_gas_fraction <= 1.0:
+        raise HTTPException(400, "heating_gas_fraction must be between 0 and 1.")
+    result = await session.execute(select(ThermostatConfig).limit(1))
+    config = result.scalar_one_or_none()
+    if config is None:
+        config = ThermostatConfig(**payload.model_dump())
+        session.add(config)
+    else:
+        for key, value in payload.model_dump().items():
+            setattr(config, key, value)
+    await session.commit()
+    await session.refresh(config)
+    if config.enabled:
+        background_tasks.add_task(poll_thermostat_readings)
+    return config
+
+
+@router.delete("/thermostat")
+async def delete_thermostat_config(session: AsyncSession = Depends(get_session)):
+    await session.execute(delete(ThermostatConfig))
     await session.commit()
     return {"ok": True}
 
@@ -152,6 +191,7 @@ async def upsert_pricing(payload: PricingConfigIn, session: AsyncSession = Depen
 async def trigger_refresh(background_tasks: BackgroundTasks):
     """Kick off an immediate poll of HA readings and a weather refresh."""
     background_tasks.add_task(poll_ha_readings)
+    background_tasks.add_task(poll_thermostat_readings)
     background_tasks.add_task(poll_weather_historical)
     background_tasks.add_task(poll_weather_forecast)
     return {"ok": True}

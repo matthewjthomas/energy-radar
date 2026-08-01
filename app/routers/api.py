@@ -9,24 +9,40 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics import (
+    aggregate_daily_thermostat,
     aggregate_daily_usage,
     aggregate_daily_weather,
     aggregate_monthly_avg_temp,
     aggregate_monthly_usage,
     detect_trend_shifts,
     evaluate_event_impact,
+    fit_proxy_model_from_thermostat,
     fit_usage_model,
     forecast_usage,
+    route_model_for_source,
 )
 from app.config import get_settings
 from app.db import get_session
-from app.models import EventMarker, HAEntityConfig, Location, PricingConfig, Reading, SourceType, WeatherForecast, WeatherObservation
+from app.models import (
+    EventMarker,
+    HAEntityConfig,
+    Location,
+    PricingConfig,
+    Reading,
+    SourceType,
+    ThermostatConfig,
+    ThermostatReading,
+    WeatherForecast,
+    WeatherObservation,
+)
 from app.schemas import (
     CorrelationResult,
     EventImpact,
     EventMarkerOut,
     ForecastPoint,
     MonthlySummary,
+    ThermostatConfigOut,
+    ThermostatPoint,
     TrendShift,
     UsagePoint,
     WeatherPoint,
@@ -61,6 +77,58 @@ async def _enabled_sources(session: AsyncSession) -> list[SourceType]:
         )
     ).scalars().all()
     return sorted(set(rows), key=lambda s: s.value)
+
+
+async def _thermostat_config(session: AsyncSession) -> ThermostatConfig | None:
+    return (await session.execute(select(ThermostatConfig).limit(1))).scalar_one_or_none()
+
+
+async def _thermostat_readings(
+    session: AsyncSession, start: dt.datetime, end: dt.datetime
+) -> list[tuple[dt.datetime, dict]]:
+    config = await _thermostat_config(session)
+    if config is None or not config.enabled:
+        return []
+    rows = (
+        await session.execute(
+            select(ThermostatReading).where(
+                ThermostatReading.entity_id == config.entity_id,
+                ThermostatReading.time >= start,
+                ThermostatReading.time <= end,
+            )
+        )
+    ).scalars().all()
+    tz = _local_tz()
+    return [
+        (
+            row.time.astimezone(tz),
+            {
+                "setpoint_c": row.setpoint_c,
+                "current_temp_c": row.current_temp_c,
+                "hvac_mode": row.hvac_mode,
+                "hvac_action": row.hvac_action,
+            },
+        )
+        for row in rows
+    ]
+
+
+def _forecast_thermostat_profile(
+    thermostat_by_date: dict[dt.date, dict[str, float]], days: list[dt.date]
+) -> dict[dt.date, dict[str, float]]:
+    if not thermostat_by_date:
+        return {}
+    avg_setpoint = sum(v["avg_setpoint_c"] for v in thermostat_by_date.values()) / len(thermostat_by_date)
+    avg_heat = sum(v["heat_hours"] for v in thermostat_by_date.values()) / len(thermostat_by_date)
+    avg_cool = sum(v["cool_hours"] for v in thermostat_by_date.values()) / len(thermostat_by_date)
+    return {
+        day: {
+            "avg_setpoint_c": avg_setpoint,
+            "heat_hours": avg_heat,
+            "cool_hours": avg_cool,
+        }
+        for day in days
+    }
 
 
 async def _readings_for_source(
@@ -219,15 +287,12 @@ async def _build_model(session: AsyncSession, source: SourceType):
     end_dt = dt.datetime.now(dt.timezone.utc)
     start_dt = end_dt - dt.timedelta(days=settings.weather_lookback_days)
     readings = await _readings_for_source(session, source, start_dt, end_dt)
-    # Include forecast weather for recent days the Open-Meteo archive hasn't
-    # published yet (typically a 1–5 day lag). The dashboard chart already mixes
-    # the two; training must as well or short-history installs never reach the
-    # minimum overlapping sample count for correlation/forecasts.
     weather = await _weather_records(session, start_dt, end_dt, include_forecast=True)
+    thermostat_cfg = await _thermostat_config(session)
+    thermostat_by_date = aggregate_daily_thermostat(
+        await _thermostat_readings(session, start_dt, end_dt)
+    )
 
-    # Drop incomplete days. Prefer a ~full day of coverage, but accept any day
-    # that isn't today and has either a wide time span or enough hourly samples
-    # so sparsely updating meters (e.g. water) still contribute.
     tz = _local_tz()
     today = dt.datetime.now(tz).date()
     times_by_day: dict[dt.date, list[dt.datetime]] = {}
@@ -243,15 +308,58 @@ async def _build_model(session: AsyncSession, source: SourceType):
 
     usage_by_date = {d: v for d, v in aggregate_daily_usage(readings).items() if d in full_days}
     weather_by_date = aggregate_daily_weather(weather)
-    # Never train on future calendar days even if forecast weather exists.
     weather_by_date = {d: w for d, w in weather_by_date.items() if d < today}
-    model = fit_usage_model(usage_by_date, weather_by_date)
-    return model, usage_by_date, weather_by_date
+
+    model = None
+    if len(usage_by_date) >= 3:
+        thermo_subset = thermostat_by_date if thermostat_by_date else None
+        model = fit_usage_model(usage_by_date, weather_by_date, thermo_subset)
+
+    if model is None and thermostat_by_date and thermostat_cfg:
+        shared_weather = {d: w for d, w in weather_by_date.items() if d in thermostat_by_date}
+        proxy = fit_proxy_model_from_thermostat(shared_weather, thermostat_by_date)
+        if proxy:
+            model = route_model_for_source(
+                proxy,
+                source,
+                thermostat_cfg.heating_fuel,
+                thermostat_cfg.cooling_fuel,
+                thermostat_cfg.heating_gas_fraction,
+            )
+            model.is_estimated = True
+            model.estimation_method = "thermostat_proxy"
+
+    return model, usage_by_date, weather_by_date, thermostat_by_date, thermostat_cfg
+
+
+@router.get("/hvac", response_model=ThermostatConfigOut | None)
+async def get_hvac_config(session: AsyncSession = Depends(get_session)):
+    return await _thermostat_config(session)
+
+
+@router.get("/thermostat", response_model=list[ThermostatPoint])
+async def get_thermostat_series(
+    start: dt.date | None = None,
+    end: dt.date | None = None,
+    session: AsyncSession = Depends(get_session),
+):
+    start_dt, end_dt = _parse_range(start, end)
+    readings = await _thermostat_readings(session, start_dt, end_dt)
+    return [
+        ThermostatPoint(
+            time=ts,
+            setpoint_c=payload.get("setpoint_c"),
+            current_temp_c=payload.get("current_temp_c"),
+            hvac_mode=payload.get("hvac_mode"),
+            hvac_action=payload.get("hvac_action"),
+        )
+        for ts, payload in readings
+    ]
 
 
 @router.get("/correlation", response_model=CorrelationResult)
 async def get_correlation(source: SourceType, session: AsyncSession = Depends(get_session)):
-    model, _, _ = await _build_model(session, source)
+    model, _, _, _, _ = await _build_model(session, source)
     if model is None:
         raise HTTPException(400, "Not enough historical data yet to compute a correlation.")
     return CorrelationResult(
@@ -259,8 +367,13 @@ async def get_correlation(source: SourceType, session: AsyncSession = Depends(ge
         intercept=model.intercept,
         hdd_coef=model.hdd_coef,
         cdd_coef=model.cdd_coef,
+        setpoint_coef=model.setpoint_coef,
+        heat_hours_coef=model.heat_hours_coef,
+        cool_hours_coef=model.cool_hours_coef,
         r_squared=model.r_squared,
         n_samples=model.n_samples,
+        is_estimated=model.is_estimated,
+        estimation_method=model.estimation_method,
     )
 
 
@@ -268,7 +381,7 @@ async def get_correlation(source: SourceType, session: AsyncSession = Depends(ge
 async def get_usage_forecast(
     source: SourceType, days: int = Query(14, ge=1, le=16), session: AsyncSession = Depends(get_session)
 ):
-    model, _, _ = await _build_model(session, source)
+    model, _, _, thermostat_by_date, _ = await _build_model(session, source)
     if model is None:
         raise HTTPException(400, "Not enough historical data yet to build a forecast.")
 
@@ -276,9 +389,9 @@ async def get_usage_forecast(
     tz = _local_tz()
     fc_records = await _weather_records(session, now, now + dt.timedelta(days=days), include_forecast=True)
     future_weather = aggregate_daily_weather([r for r in fc_records if r["time"] > now.astimezone(tz)])
-    predicted = forecast_usage(model, future_weather)
+    future_thermostat = _forecast_thermostat_profile(thermostat_by_date, list(future_weather.keys()))
+    predicted = forecast_usage(model, future_weather, future_thermostat or None)
 
-    # Daily high temperature from forecast records.
     daily_high: dict[dt.date, float] = {}
     for r in fc_records:
         if r["temperature_c"] is None:
@@ -295,6 +408,7 @@ async def get_usage_forecast(
             predicted_value=value,
             predicted_cost=(value * price if price else None),
             high_temp_c=daily_high.get(day),
+            is_estimated=model.is_estimated,
         )
         for day, value in sorted(predicted.items())
     ]
@@ -302,15 +416,15 @@ async def get_usage_forecast(
 
 @router.get("/trends", response_model=list[TrendShift])
 async def get_trends(source: SourceType, session: AsyncSession = Depends(get_session)):
-    model, _, _ = await _build_model(session, source)
-    if model is None:
+    model, _, _, _, _ = await _build_model(session, source)
+    if model is None or model.is_estimated:
         return []
     return [TrendShift(**s) for s in detect_trend_shifts(model)]
 
 
 @router.get("/events/impact", response_model=list[EventImpact])
 async def get_event_impacts(source: SourceType, session: AsyncSession = Depends(get_session)):
-    _, usage_by_date, _ = await _build_model(session, source)
+    _, usage_by_date, _, _, _ = await _build_model(session, source)
     events = (await session.execute(select(EventMarker).order_by(EventMarker.event_date))).scalars().all()
     impacts = []
     for event in events:

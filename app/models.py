@@ -28,6 +28,23 @@ class SourceType(str, enum.Enum):
     water = "water"
 
 
+class HeatingFuelType(str, enum.Enum):
+    """Which utility primarily supplies space heating."""
+
+    electric = "electric"
+    gas = "gas"
+    heat_pump = "heat_pump"
+    dual = "dual"
+    unknown = "unknown"
+
+
+class CoolingFuelType(str, enum.Enum):
+    """Which utility supplies air conditioning (almost always electric)."""
+
+    electric = "electric"
+    unknown = "unknown"
+
+
 class Location(Base):
     """The single address used to look up weather data."""
 
@@ -63,7 +80,41 @@ class HAEntityConfig(Base):
     )
 
 
-class PricingConfig(Base):
+class ThermostatConfig(Base):
+    """Optional Home Assistant climate entity used for setpoint-aware modeling."""
+
+    __tablename__ = "thermostat_configs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    entity_id: Mapped[str] = mapped_column(String(255), unique=True)
+    friendly_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    heating_fuel: Mapped[HeatingFuelType] = mapped_column(
+        Enum(HeatingFuelType), default=HeatingFuelType.unknown
+    )
+    cooling_fuel: Mapped[CoolingFuelType] = mapped_column(
+        Enum(CoolingFuelType), default=CoolingFuelType.electric
+    )
+    # When heating_fuel is dual, fraction of heating load attributed to gas (rest is electric).
+    heating_gas_fraction: Mapped[float] = mapped_column(Float, default=0.5)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: dt.datetime.now(dt.timezone.utc)
+    )
+
+
+class ThermostatReading(Base):
+    """Point-in-time thermostat state, stored as a hypertable."""
+
+    __tablename__ = "thermostat_readings"
+
+    time: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
+    entity_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    setpoint_c: Mapped[float | None] = mapped_column(Float, nullable=True)
+    current_temp_c: Mapped[float | None] = mapped_column(Float, nullable=True)
+    hvac_mode: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    hvac_action: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+
     """Optional price per unit so usage can be converted into an estimated cost."""
 
     __tablename__ = "pricing_configs"

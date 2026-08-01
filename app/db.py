@@ -19,7 +19,7 @@ engine = create_async_engine(settings.database_url, pool_pre_ping=True)
 async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
 # Tables that should become TimescaleDB hypertables partitioned on `time`.
-_HYPERTABLES = ["readings", "weather_observations", "weather_forecasts"]
+_HYPERTABLES = ["readings", "weather_observations", "weather_forecasts", "thermostat_readings"]
 
 
 async def init_db() -> None:

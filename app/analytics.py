@@ -3,6 +3,8 @@
 Deliberately dependency-light (numpy only) so it stays easy to build/maintain:
 - Usage is modeled against heating/cooling degree-days (base 18C) via linear
   least squares regression per utility source.
+- Thermostat setpoint and runtime hours improve the model when available.
+- When meter data is sparse, estimates can be derived from thermostat + weather.
 - Forecasted usage projects that regression onto the weather forecast.
 - Trend-change detection compares rolling residual means to flag shifts, and
   quantifies the before/after impact of user-added event markers.
@@ -13,6 +15,8 @@ import datetime as dt
 from dataclasses import dataclass, field
 
 import numpy as np
+
+from app.models import CoolingFuelType, HeatingFuelType, SourceType
 
 DEGREE_DAY_BASE_C = 18.0
 
@@ -88,6 +92,48 @@ def aggregate_daily_weather(
     return summary
 
 
+def _is_heating_action(mode: str | None, action: str | None) -> bool:
+    mode = (mode or "").lower()
+    action = (action or "").lower()
+    return action == "heating" or mode in ("heat", "emergency_heat")
+
+
+def _is_cooling_action(mode: str | None, action: str | None) -> bool:
+    mode = (mode or "").lower()
+    action = (action or "").lower()
+    return action == "cooling" or mode == "cool"
+
+
+def aggregate_daily_thermostat(
+    readings: list[tuple[dt.datetime, dict]],
+    sample_hours: float = 0.25,
+) -> dict[dt.date, dict[str, float]]:
+    """Summarize thermostat snapshots into daily averages and runtime hours."""
+    by_day: dict[dt.date, list[dict]] = {}
+    for timestamp, payload in readings:
+        by_day.setdefault(timestamp.date(), []).append(payload)
+
+    summary: dict[dt.date, dict[str, float]] = {}
+    for day, entries in by_day.items():
+        setpoints = [e["setpoint_c"] for e in entries if e.get("setpoint_c") is not None]
+        currents = [e["current_temp_c"] for e in entries if e.get("current_temp_c") is not None]
+        heat_hours = sum(
+            sample_hours for e in entries if _is_heating_action(e.get("hvac_mode"), e.get("hvac_action"))
+        )
+        cool_hours = sum(
+            sample_hours for e in entries if _is_cooling_action(e.get("hvac_mode"), e.get("hvac_action"))
+        )
+        if not setpoints and not currents and heat_hours == 0 and cool_hours == 0:
+            continue
+        summary[day] = {
+            "avg_setpoint_c": float(np.mean(setpoints)) if setpoints else DEGREE_DAY_BASE_C,
+            "avg_current_temp_c": float(np.mean(currents)) if currents else None,
+            "heat_hours": heat_hours,
+            "cool_hours": cool_hours,
+        }
+    return summary
+
+
 @dataclass
 class RegressionResult:
     intercept: float
@@ -95,29 +141,73 @@ class RegressionResult:
     cdd_coef: float
     r_squared: float
     n_samples: int
+    setpoint_coef: float = 0.0
+    heat_hours_coef: float = 0.0
+    cool_hours_coef: float = 0.0
+    is_estimated: bool = False
+    estimation_method: str | None = None
     dates: list[dt.date] = field(default_factory=list)
     residuals: dict[dt.date, float] = field(default_factory=dict)
 
-    def predict(self, hdd: float, cdd: float) -> float:
-        return self.intercept + self.hdd_coef * hdd + self.cdd_coef * cdd
+    def predict(
+        self,
+        hdd: float,
+        cdd: float,
+        avg_setpoint_c: float = DEGREE_DAY_BASE_C,
+        heat_hours: float = 0.0,
+        cool_hours: float = 0.0,
+    ) -> float:
+        return (
+            self.intercept
+            + self.hdd_coef * hdd
+            + self.cdd_coef * cdd
+            + self.setpoint_coef * avg_setpoint_c
+            + self.heat_hours_coef * heat_hours
+            + self.cool_hours_coef * cool_hours
+        )
+
+
+def _aligned_days(
+    usage_by_date: dict[dt.date, float],
+    weather_by_date: dict[dt.date, dict[str, float]],
+    thermostat_by_date: dict[dt.date, dict[str, float]] | None = None,
+) -> list[dt.date]:
+    dates = sorted(d for d in usage_by_date if d in weather_by_date)
+    if thermostat_by_date:
+        dates = [d for d in dates if d in thermostat_by_date]
+    return dates
 
 
 def fit_usage_model(
     usage_by_date: dict[dt.date, float],
     weather_by_date: dict[dt.date, dict[str, float]],
+    thermostat_by_date: dict[dt.date, dict[str, float]] | None = None,
 ) -> RegressionResult | None:
-    """Fit usage = intercept + hdd_coef*HDD + cdd_coef*CDD via least squares."""
-    dates = sorted(d for d in usage_by_date if d in weather_by_date)
+    """Fit usage against HDD/CDD and optional thermostat features via least squares."""
+    dates = _aligned_days(usage_by_date, weather_by_date, thermostat_by_date)
     if len(dates) < 3:
         return None
 
     y = np.array([usage_by_date[d] for d in dates])
     x_hdd = np.array([weather_by_date[d]["hdd"] for d in dates])
     x_cdd = np.array([weather_by_date[d]["cdd"] for d in dates])
-    design = np.column_stack([np.ones_like(y), x_hdd, x_cdd])
+    columns = [np.ones_like(y), x_hdd, x_cdd]
 
+    if thermostat_by_date:
+        x_setpoint = np.array([thermostat_by_date[d]["avg_setpoint_c"] for d in dates])
+        x_heat = np.array([thermostat_by_date[d]["heat_hours"] for d in dates])
+        x_cool = np.array([thermostat_by_date[d]["cool_hours"] for d in dates])
+        columns.extend([x_setpoint, x_heat, x_cool])
+
+    design = np.column_stack(columns)
     coeffs, _, _, _ = np.linalg.lstsq(design, y, rcond=None)
-    intercept, hdd_coef, cdd_coef = coeffs
+
+    intercept = float(coeffs[0])
+    hdd_coef = float(coeffs[1])
+    cdd_coef = float(coeffs[2])
+    setpoint_coef = float(coeffs[3]) if thermostat_by_date else 0.0
+    heat_hours_coef = float(coeffs[4]) if thermostat_by_date else 0.0
+    cool_hours_coef = float(coeffs[5]) if thermostat_by_date else 0.0
 
     predictions = design @ coeffs
     residuals = y - predictions
@@ -126,9 +216,12 @@ def fit_usage_model(
     r_squared = 1 - ss_res / ss_tot if ss_tot > 0 else 0.0
 
     return RegressionResult(
-        intercept=float(intercept),
-        hdd_coef=float(hdd_coef),
-        cdd_coef=float(cdd_coef),
+        intercept=intercept,
+        hdd_coef=hdd_coef,
+        cdd_coef=cdd_coef,
+        setpoint_coef=setpoint_coef,
+        heat_hours_coef=heat_hours_coef,
+        cool_hours_coef=cool_hours_coef,
         r_squared=float(r_squared),
         n_samples=len(dates),
         dates=dates,
@@ -136,15 +229,110 @@ def fit_usage_model(
     )
 
 
+def fit_proxy_model_from_thermostat(
+    weather_by_date: dict[dt.date, dict[str, float]],
+    thermostat_by_date: dict[dt.date, dict[str, float]],
+) -> RegressionResult | None:
+    """Build a proxy load signal from thermostat + weather when meters are missing."""
+    dates = sorted(d for d in weather_by_date if d in thermostat_by_date)
+    if len(dates) < 3:
+        return None
+
+    proxy_by_date: dict[dt.date, float] = {}
+    for day in dates:
+        weather = weather_by_date[day]
+        thermo = thermostat_by_date[day]
+        setpoint = thermo["avg_setpoint_c"]
+        outdoor = weather["avg_temp_c"]
+        heat_gap = max(setpoint - outdoor, 0.0)
+        cool_gap = max(outdoor - setpoint, 0.0)
+        proxy_by_date[day] = (
+            thermo["heat_hours"] * heat_gap
+            + thermo["cool_hours"] * cool_gap
+            + weather["hdd"] * 0.25
+            + weather["cdd"] * 0.25
+        )
+
+    return fit_usage_model(proxy_by_date, weather_by_date, thermostat_by_date)
+
+
+def heating_load_fraction(
+    heating_fuel: HeatingFuelType, source: SourceType, gas_fraction: float = 0.5
+) -> float:
+    """Return the share of heating-related model terms that apply to this utility."""
+    if source == SourceType.water:
+        return 0.0
+    if heating_fuel == HeatingFuelType.gas:
+        return 1.0 if source == SourceType.gas else 0.0
+    if heating_fuel in (HeatingFuelType.electric, HeatingFuelType.heat_pump):
+        return 1.0 if source == SourceType.electricity else 0.0
+    if heating_fuel == HeatingFuelType.dual:
+        if source == SourceType.gas:
+            return gas_fraction
+        if source == SourceType.electricity:
+            return 1.0 - gas_fraction
+        return 0.0
+    # Unknown: split modestly across electric and gas when both exist.
+    if source == SourceType.electricity:
+        return 0.6
+    if source == SourceType.gas:
+        return 0.4
+    return 0.0
+
+
+def cooling_load_fraction(cooling_fuel: CoolingFuelType, source: SourceType) -> float:
+    if source != SourceType.electricity:
+        return 0.0
+    if cooling_fuel == CoolingFuelType.electric:
+        return 1.0
+    return 0.8
+
+
+def route_model_for_source(
+    model: RegressionResult,
+    source: SourceType,
+    heating_fuel: HeatingFuelType,
+    cooling_fuel: CoolingFuelType,
+    gas_fraction: float = 0.5,
+) -> RegressionResult:
+    """Scale HDD/CDD/runtime coefficients to the utility that supplies each load."""
+    heat_frac = heating_load_fraction(heating_fuel, source, gas_fraction)
+    cool_frac = cooling_load_fraction(cooling_fuel, source)
+    heat_pump_scale = 0.7 if heating_fuel == HeatingFuelType.heat_pump else 1.0
+    return RegressionResult(
+        intercept=model.intercept * max(heat_frac, cool_frac, 0.15 if source != SourceType.water else 0.0),
+        hdd_coef=model.hdd_coef * heat_frac * heat_pump_scale,
+        cdd_coef=model.cdd_coef * cool_frac,
+        setpoint_coef=model.setpoint_coef * max(heat_frac, cool_frac),
+        heat_hours_coef=model.heat_hours_coef * heat_frac * heat_pump_scale,
+        cool_hours_coef=model.cool_hours_coef * cool_frac,
+        r_squared=model.r_squared,
+        n_samples=model.n_samples,
+        is_estimated=model.is_estimated,
+        estimation_method=model.estimation_method,
+        dates=model.dates,
+        residuals=model.residuals,
+    )
+
+
 def forecast_usage(
     model: RegressionResult,
     weather_by_date: dict[dt.date, dict[str, float]],
+    thermostat_by_date: dict[dt.date, dict[str, float]] | None = None,
 ) -> dict[dt.date, float]:
     """Project future usage from forecasted weather using the fitted model."""
-    return {
-        day: max(model.predict(w["hdd"], w["cdd"]), 0.0)
-        for day, w in sorted(weather_by_date.items())
-    }
+    predicted: dict[dt.date, float] = {}
+    for day, weather in sorted(weather_by_date.items()):
+        thermo = (thermostat_by_date or {}).get(day, {})
+        value = model.predict(
+            weather["hdd"],
+            weather["cdd"],
+            thermo.get("avg_setpoint_c", DEGREE_DAY_BASE_C),
+            thermo.get("heat_hours", 0.0),
+            thermo.get("cool_hours", 0.0),
+        )
+        predicted[day] = max(value, 0.0)
+    return predicted
 
 
 def detect_trend_shifts(
@@ -173,7 +361,6 @@ def detect_trend_shifts(
                     "z_score": z,
                 }
             )
-    # Collapse consecutive detections into single events (keep the strongest).
     collapsed: list[dict] = []
     for shift in shifts:
         if collapsed and (shift["date"] - collapsed[-1]["date"]).days <= window:

@@ -12,7 +12,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from app.config import get_settings
 from app.db import session_scope
 from app.ha_client import HomeAssistantClient, HomeAssistantError
-from app.models import HAEntityConfig, Location, Reading, WeatherForecast, WeatherObservation
+from app.models import HAEntityConfig, Location, Reading, ThermostatConfig, ThermostatReading, WeatherForecast, WeatherObservation
 from app.weather_client import get_forecast_weather, get_historical_weather
 
 logger = logging.getLogger(__name__)
@@ -201,6 +201,82 @@ async def poll_ha_readings() -> None:
         await session.commit()
 
 
+async def poll_thermostat_readings() -> None:
+    settings = get_settings()
+    if not settings.ha_configured:
+        return
+
+    client = HomeAssistantClient(settings.ha_url, settings.ha_token)
+    now = dt.datetime.now(dt.timezone.utc)
+
+    async with session_scope() as session:
+        configs = (
+            await session.execute(
+                select(ThermostatConfig).where(ThermostatConfig.enabled.is_(True))
+            )
+        ).scalars().all()
+        if not configs:
+            return
+
+        for cfg in configs:
+            last_reading = (
+                await session.execute(
+                    select(ThermostatReading)
+                    .where(ThermostatReading.entity_id == cfg.entity_id)
+                    .order_by(ThermostatReading.time.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+
+            history_start = (
+                last_reading.time if last_reading else now - dt.timedelta(days=settings.ha_stats_lookback_days)
+            )
+            rows: list[dict] = []
+            try:
+                history_points = await client.get_climate_history(cfg.entity_id, history_start, now)
+            except HomeAssistantError:
+                logger.warning("Failed to fetch HA climate history for %s", cfg.entity_id, exc_info=True)
+                history_points = []
+
+            for timestamp, payload in history_points:
+                if last_reading and timestamp <= last_reading.time:
+                    continue
+                rows.append(
+                    {
+                        "time": timestamp,
+                        "entity_id": cfg.entity_id,
+                        "setpoint_c": payload.get("setpoint_c"),
+                        "current_temp_c": payload.get("current_temp_c"),
+                        "hvac_mode": payload.get("hvac_mode"),
+                        "hvac_action": payload.get("hvac_action"),
+                    }
+                )
+
+            if not rows:
+                latest = await client.get_climate_state(cfg.entity_id)
+                if latest and (last_reading is None or latest[0] > last_reading.time):
+                    timestamp, payload = latest
+                    rows.append(
+                        {
+                            "time": timestamp,
+                            "entity_id": cfg.entity_id,
+                            "setpoint_c": payload.get("setpoint_c"),
+                            "current_temp_c": payload.get("current_temp_c"),
+                            "hvac_mode": payload.get("hvac_mode"),
+                            "hvac_action": payload.get("hvac_action"),
+                        }
+                    )
+
+            if rows:
+                for batch in _batched(rows, _INSERT_BATCH_SIZE):
+                    stmt = pg_insert(ThermostatReading).values(batch)
+                    stmt = stmt.on_conflict_do_nothing(index_elements=["time", "entity_id"])
+                    await session.execute(stmt)
+                logger.info("Stored %d thermostat rows for %s", len(rows), cfg.entity_id)
+
+        await session.commit()
+
+
 async def poll_weather_historical() -> None:
     """Backfill actual weather observations up to yesterday (archive has a short lag)."""
     settings = get_settings()
@@ -312,6 +388,12 @@ def create_scheduler() -> AsyncIOScheduler:
         poll_weather_forecast,
         IntervalTrigger(hours=settings.weather_forecast_interval_hours),
         id="poll_weather_forecast",
+        next_run_time=dt.datetime.now(),
+    )
+    scheduler.add_job(
+        poll_thermostat_readings,
+        IntervalTrigger(minutes=settings.ha_poll_interval_minutes),
+        id="poll_thermostat_readings",
         next_run_time=dt.datetime.now(),
     )
     scheduler.add_job(

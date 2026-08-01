@@ -29,7 +29,30 @@ function formatPeriodLabel(startISO, endISO) {
   return `${startFmt} – ${end.toLocaleDateString(undefined, full)}`;
 }
 
-function proseHighlight(source, text) {
+const HEATING_FUEL_LABELS = {
+  electric: "electric heating",
+  gas: "gas heating",
+  heat_pump: "heat pump",
+  dual: "dual-fuel heating",
+  unknown: "unknown heating",
+};
+
+function forecastableSources(usageBySource, hvac) {
+  const sources = new Set(Object.keys(usageBySource));
+  if (!hvac || !hvac.enabled) return [...sources];
+  const heat = hvac.heating_fuel;
+  if (heat === "electric" || heat === "heat_pump" || heat === "dual" || heat === "unknown") {
+    sources.add("electricity");
+  }
+  if (heat === "gas" || heat === "dual" || heat === "unknown") {
+    sources.add("gas");
+  }
+  if (hvac.cooling_fuel === "electric" || hvac.cooling_fuel === "unknown") {
+    sources.add("electricity");
+  }
+  return [...sources];
+}
+
   return `<span class="prose-highlight ${source}">${text}</span>`;
 }
 
@@ -77,60 +100,82 @@ function loadProseSummary(usageBySource, weather, units) {
   summary.innerHTML = text;
 }
 
-async function loadInsights(sources) {
+async function loadInsights(sources, hvac) {
   const list = document.getElementById("insights-list");
   list.innerHTML = "";
-  if (sources.length === 0) {
-    list.innerHTML = `<div class="insight-item">Map a Home Assistant source in Settings to see insights.</div>`;
+  const forecastSources = forecastableSources(Object.fromEntries(sources.map((s) => [s, true])), hvac);
+  if (forecastSources.length === 0) {
+    list.innerHTML = `<div class="insight-item">Map a utility meter or thermostat in Settings to see insights.</div>`;
     return;
   }
   let any = false;
-  for (const source of sources) {
+  for (const source of forecastSources) {
     try {
       const corr = await Api.get(`/api/correlation?source=${source}`);
       any = true;
       const item = document.createElement("div");
       item.className = "insight-item";
       const direction = corr.hdd_coef > corr.cdd_coef ? "colder days" : "warmer days";
-      item.innerHTML = `${SOURCE_LABELS[source]} tracks weather with R\u00b2=${fmtNumber(corr.r_squared, 2)} (mostly driven by ${direction}).`;
+      const estimated = corr.is_estimated
+        ? " (estimated from thermostat setpoint and runtime)"
+        : "";
+      const thermostatNote =
+        corr.setpoint_coef && Math.abs(corr.setpoint_coef) > 0.01
+          ? " Setpoint also influences the model."
+          : "";
+      item.innerHTML = `${SOURCE_LABELS[source] || source} tracks weather with R\u00b2=${fmtNumber(corr.r_squared, 2)} (mostly driven by ${direction})${estimated}.${thermostatNote}`;
       list.appendChild(item);
     } catch (e) {
-      // Not enough overlapping usage/weather history yet for this source.
+      // Not enough overlapping history yet for this source.
     }
   }
   if (!any) {
-    list.innerHTML = `<div class="insight-item">Still collecting historical data &mdash; insights need about 3 full days of overlapping usage and weather.</div>`;
+    list.innerHTML = `<div class="insight-item">Still collecting data &mdash; insights need about 3 days of overlapping thermostat/weather or meter history.</div>`;
+  }
+  if (hvac && hvac.enabled) {
+    const fuel = HEATING_FUEL_LABELS[hvac.heating_fuel] || hvac.heating_fuel;
+    const item = document.createElement("div");
+    item.className = "insight-item muted";
+    item.textContent = `HVAC configured: ${fuel}, cooling via ${hvac.cooling_fuel}.`;
+    list.appendChild(item);
   }
 }
 
-async function loadForecast(sources, units) {
+async function loadForecast(sources, units, hvac) {
   const status = document.getElementById("forecast-status");
-  if (sources.length === 0) {
+  const forecastSources = forecastableSources(Object.fromEntries(sources.map((s) => [s, true])), hvac);
+  if (forecastSources.length === 0) {
     status.textContent = "";
     return;
   }
-  const source = sources[0];
+  const source = forecastSources.includes("electricity")
+    ? "electricity"
+    : forecastSources[0];
   try {
     const forecast = await Api.get(`/api/forecast/usage?source=${source}&days=14`);
-    status.textContent = "Predicted usage for the next 14 days, based on forecast weather.";
+    const estimated = forecast.some((p) => p.is_estimated);
+    status.textContent = estimated
+      ? `Estimated ${SOURCE_LABELS[source] || source} for the next 14 days using thermostat setpoint, runtime, and forecast weather (no meter data).`
+      : "Predicted usage for the next 14 days, based on forecast weather and thermostat history when available.";
     renderForecastChart("forecast-chart", forecast, source, units[source]);
   } catch (e) {
-    status.textContent = "Still collecting historical data \u2014 forecasts need about 3 full days of overlapping usage and weather.";
+    status.textContent = "Still collecting data \u2014 forecasts need meter history or a mapped thermostat with a few days of readings.";
     console.warn("Forecast unavailable", e);
   }
 }
 
 async function refreshDashboard() {
-  const [usageBySource, weather, units] = await Promise.all([
+  const [usageBySource, weather, units, hvac] = await Promise.all([
     Api.get(`/api/usage?${rangeQuery()}`),
     Api.get(`/api/weather?${rangeQuery()}`),
     Api.get("/api/sources/units"),
+    Api.get("/api/hvac").catch(() => null),
   ]);
   const sources = Object.keys(usageBySource);
   renderUsageWeatherChart("usage-weather-chart", usageBySource, weather, [], units);
   loadProseSummary(usageBySource, weather, units);
-  await loadInsights(sources);
-  await loadForecast(sources, units);
+  await loadInsights(sources, hvac);
+  await loadForecast(sources, units, hvac);
 }
 
 document.addEventListener("DOMContentLoaded", () => {

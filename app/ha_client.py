@@ -70,9 +70,109 @@ class HomeAssistantClient:
                         "unit": unit,
                         "device_class": device_class,
                         "state": state.get("state"),
+                        "entity_kind": "sensor",
                     }
                 )
         return candidates
+
+    async def list_climate_entities(self) -> list[dict[str, Any]]:
+        """Return climate/thermostat entities from Home Assistant."""
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            resp = await client.get(f"{self.base_url}/api/states", headers=self._headers)
+            resp.raise_for_status()
+            states = resp.json()
+
+        candidates = []
+        for state in states:
+            entity_id = state.get("entity_id", "")
+            if not entity_id.startswith("climate."):
+                continue
+            attrs = state.get("attributes", {})
+            candidates.append(
+                {
+                    "entity_id": entity_id,
+                    "friendly_name": attrs.get("friendly_name", entity_id),
+                    "unit": attrs.get("temperature_unit"),
+                    "device_class": "climate",
+                    "state": state.get("state"),
+                    "entity_kind": "climate",
+                }
+            )
+        return candidates
+
+    @staticmethod
+    def _parse_climate_payload(data: dict[str, Any]) -> dict[str, Any] | None:
+        attrs = data.get("attributes", {})
+        setpoint = attrs.get("temperature")
+        if setpoint is None:
+            setpoint = attrs.get("target_temp_low") or attrs.get("target_temp_high")
+        current = attrs.get("current_temperature")
+        try:
+            setpoint_c = float(setpoint) if setpoint is not None else None
+        except (TypeError, ValueError):
+            setpoint_c = None
+        try:
+            current_c = float(current) if current is not None else None
+        except (TypeError, ValueError):
+            current_c = None
+        unit = (attrs.get("temperature_unit") or attrs.get("unit_of_measurement") or "F").upper()
+        if unit in ("F", "°F"):
+            if setpoint_c is not None:
+                setpoint_c = (setpoint_c - 32) * 5 / 9
+            if current_c is not None:
+                current_c = (current_c - 32) * 5 / 9
+        return {
+            "setpoint_c": setpoint_c,
+            "current_temp_c": current_c,
+            "hvac_mode": data.get("state"),
+            "hvac_action": attrs.get("hvac_action"),
+        }
+
+    async def get_climate_state(self, entity_id: str) -> tuple[dt.datetime, dict[str, Any]] | None:
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            resp = await client.get(
+                f"{self.base_url}/api/states/{entity_id}", headers=self._headers
+            )
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+        payload = self._parse_climate_payload(data)
+        if payload is None:
+            return None
+        last_changed = dt.datetime.fromisoformat(data["last_updated"].replace("Z", "+00:00"))
+        return last_changed, payload
+
+    async def get_climate_history(
+        self, entity_id: str, start: dt.datetime, end: dt.datetime
+    ) -> list[tuple[dt.datetime, dict[str, Any]]]:
+        """Fetch climate entity history including attributes for setpoint/action."""
+        params = {
+            "filter_entity_id": entity_id,
+            "end_time": end.isoformat(),
+            "minimal_response": "false",
+            "no_attributes": "false",
+        }
+        url = f"{self.base_url}/api/history/period/{start.isoformat()}"
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            resp = await client.get(url, headers=self._headers, params=params)
+            if resp.status_code != 200:
+                raise HomeAssistantError(
+                    f"HA climate history request failed ({resp.status_code}): {resp.text[:200]}"
+                )
+            data = resp.json()
+
+        if not data:
+            return []
+
+        points: list[tuple[dt.datetime, dict[str, Any]]] = []
+        for entry in data[0]:
+            payload = self._parse_climate_payload(entry)
+            if payload is None:
+                continue
+            ts_raw = entry.get("last_changed") or entry.get("last_updated")
+            timestamp = dt.datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+            points.append((timestamp, payload))
+        return points
 
     async def get_latest_state(self, entity_id: str) -> tuple[dt.datetime, float] | None:
         async with httpx.AsyncClient(timeout=self._timeout) as client:

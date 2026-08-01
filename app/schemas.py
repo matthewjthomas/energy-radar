@@ -5,7 +5,7 @@ import datetime as dt
 
 from pydantic import BaseModel, ConfigDict
 
-from app.models import SourceType
+from app.models import CoolingFuelType, HeatingFuelType, SourceType
 
 
 class LocationIn(BaseModel):
@@ -49,6 +49,36 @@ class DiscoveredEntity(BaseModel):
     unit: str | None = None
     device_class: str | None = None
     state: str | None = None
+    entity_kind: str = "sensor"
+
+
+class ThermostatConfigIn(BaseModel):
+    entity_id: str
+    friendly_name: str | None = None
+    heating_fuel: HeatingFuelType = HeatingFuelType.unknown
+    cooling_fuel: CoolingFuelType = CoolingFuelType.electric
+    heating_gas_fraction: float = 0.5
+    enabled: bool = True
+
+
+class ThermostatConfigOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    entity_id: str
+    friendly_name: str | None
+    heating_fuel: HeatingFuelType
+    cooling_fuel: CoolingFuelType
+    heating_gas_fraction: float
+    enabled: bool
+
+
+class ThermostatPoint(BaseModel):
+    time: dt.datetime
+    setpoint_c: float | None
+    current_temp_c: float | None
+    hvac_mode: str | None
+    hvac_action: str | None
 
 
 class PricingConfigIn(BaseModel):
@@ -100,6 +130,7 @@ class ForecastPoint(BaseModel):
     predicted_value: float
     predicted_cost: float | None = None
     high_temp_c: float | None = None
+    is_estimated: bool = False
 
 
 class TrendShift(BaseModel):
@@ -122,8 +153,13 @@ class CorrelationResult(BaseModel):
     intercept: float
     hdd_coef: float
     cdd_coef: float
+    setpoint_coef: float = 0.0
+    heat_hours_coef: float = 0.0
+    cool_hours_coef: float = 0.0
     r_squared: float
     n_samples: int
+    is_estimated: bool = False
+    estimation_method: str | None = None
 
 
 class MonthlySummary(BaseModel):
