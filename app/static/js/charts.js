@@ -13,7 +13,7 @@ function _chartColors() {
     text: _cssVar("--chart-text", "#1e1e1c"),
     textMuted: _cssVar("--chart-text-muted", "#3d3d38"),
     grid: _cssVar("--chart-grid", "#d8d8d4"),
-    tempLine: _cssVar("--chart-temp-line", "#2a7080"),
+    tempLine: _cssVar("--chart-temp-line", "#78716c"),
     tooltipBg: _cssVar("--chart-tooltip-bg", "#1e1e1c"),
     tooltipText: _cssVar("--chart-tooltip-text", "#fdfdfb"),
   };
@@ -23,6 +23,26 @@ function _sourceColor(source) {
   const vars = { electricity: "--electricity", gas: "--gas", water: "--water" };
   const fromCss = vars[source] ? _cssVar(vars[source], "") : "";
   return fromCss || SOURCE_COLORS[source] || "#888888";
+}
+
+function _datasetColor(dataset) {
+  if (dataset.borderColor && dataset.borderColor !== "transparent") {
+    return dataset.borderColor;
+  }
+  const bg = dataset.backgroundColor;
+  if (Array.isArray(bg)) return bg[0];
+  return bg;
+}
+
+function _barDatasetStyle(color) {
+  return {
+    backgroundColor: color,
+    borderColor: color,
+    pointStyle: "rect",
+    pointBackgroundColor: color,
+    pointBorderColor: color,
+    pointBorderWidth: 0,
+  };
 }
 
 function _hexToRgba(hex, alpha) {
@@ -51,12 +71,15 @@ function _solidLegendTooltipPlugins(colors) {
       titleColor: colors.tooltipText,
       bodyColor: colors.tooltipText,
       callbacks: {
-        labelColor: (item) => ({
-          borderColor: "transparent",
-          backgroundColor: item.dataset.borderColor,
-          borderWidth: 0,
-          borderRadius: 2,
-        }),
+        labelColor: (item) => {
+          const fill = _datasetColor(item.dataset);
+          return {
+            borderColor: fill,
+            backgroundColor: fill,
+            borderWidth: 0,
+            borderRadius: 2,
+          };
+        },
       },
     },
   };
@@ -115,7 +138,7 @@ function renderUsageWeatherChart(canvasId, usageBySource, weatherPoints, eventMa
       type: "bar",
       label: `${SOURCE_LABELS[source] || source}${unitSuffix}`,
       data: labels.map((d) => byDate[d] ?? null),
-      backgroundColor: _sourceColor(source),
+      ..._barDatasetStyle(_sourceColor(source)),
       yAxisID: "y",
       borderRadius: 3,
     });

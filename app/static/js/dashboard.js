@@ -69,7 +69,7 @@ function loadProseSummary(usageBySource, weather, units) {
   if (text) text += ".";
   if (maxTempC != null) {
     const warmest = `${fmtNumber(convertTemp(maxTempC), 0)}${tempUnitLabel()}`;
-    text += ` Temperatures reached ${proseHighlight("water", warmest)} on the warmest day in this period.`;
+    text += ` Temperatures reached ${proseHighlight("temperature", warmest)} on the warmest day in this period.`;
   }
   if (!text) {
     text = "No usage recorded for this date range yet.";

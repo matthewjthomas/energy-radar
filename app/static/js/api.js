@@ -44,7 +44,7 @@ const Api = {
 const SOURCE_COLORS = {
   electricity: "#9a7200",
   gas: "#3a5585",
-  water: "#2a7080",
+  water: "#0891b2",
 };
 
 const SOURCE_LABELS = {
