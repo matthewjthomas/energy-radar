@@ -18,6 +18,7 @@ from app.analytics import (
     evaluate_event_impact,
     fit_proxy_model_from_thermostat,
     fit_usage_model,
+    forecast_thermostat_profile,
     forecast_usage,
     route_model_for_source,
 )
@@ -114,21 +115,14 @@ async def _thermostat_readings(
 
 
 def _forecast_thermostat_profile(
-    thermostat_by_date: dict[dt.date, dict[str, float]], days: list[dt.date]
+    thermostat_by_date: dict[dt.date, dict[str, float]],
+    days: list[dt.date],
+    historical_weather: dict[dt.date, dict[str, float]],
+    future_weather: dict[dt.date, dict[str, float]],
 ) -> dict[dt.date, dict[str, float]]:
-    if not thermostat_by_date:
-        return {}
-    avg_setpoint = sum(v["avg_setpoint_c"] for v in thermostat_by_date.values()) / len(thermostat_by_date)
-    avg_heat = sum(v["heat_hours"] for v in thermostat_by_date.values()) / len(thermostat_by_date)
-    avg_cool = sum(v["cool_hours"] for v in thermostat_by_date.values()) / len(thermostat_by_date)
-    return {
-        day: {
-            "avg_setpoint_c": avg_setpoint,
-            "heat_hours": avg_heat,
-            "cool_hours": avg_cool,
-        }
-        for day in days
-    }
+    return forecast_thermostat_profile(
+        thermostat_by_date, days, historical_weather, future_weather
+    )
 
 
 async def _readings_for_source(
@@ -314,6 +308,14 @@ async def _build_model(session: AsyncSession, source: SourceType):
     if len(usage_by_date) >= 3:
         thermo_subset = thermostat_by_date if thermostat_by_date else None
         model = fit_usage_model(usage_by_date, weather_by_date, thermo_subset)
+        if model and thermostat_cfg:
+            model = route_model_for_source(
+                model,
+                source,
+                thermostat_cfg.heating_fuel,
+                thermostat_cfg.cooling_fuel,
+                thermostat_cfg.heating_gas_fraction,
+            )
 
     if model is None and thermostat_by_date and thermostat_cfg:
         shared_weather = {d: w for d, w in weather_by_date.items() if d in thermostat_by_date}
@@ -381,7 +383,7 @@ async def get_correlation(source: SourceType, session: AsyncSession = Depends(ge
 async def get_usage_forecast(
     source: SourceType, days: int = Query(14, ge=1, le=16), session: AsyncSession = Depends(get_session)
 ):
-    model, _, _, thermostat_by_date, _ = await _build_model(session, source)
+    model, _, weather_by_date, thermostat_by_date, _ = await _build_model(session, source)
     if model is None:
         raise HTTPException(400, "Not enough historical data yet to build a forecast.")
 
@@ -389,7 +391,12 @@ async def get_usage_forecast(
     tz = _local_tz()
     fc_records = await _weather_records(session, now, now + dt.timedelta(days=days), include_forecast=True)
     future_weather = aggregate_daily_weather([r for r in fc_records if r["time"] > now.astimezone(tz)])
-    future_thermostat = _forecast_thermostat_profile(thermostat_by_date, list(future_weather.keys()))
+    future_thermostat = _forecast_thermostat_profile(
+        thermostat_by_date,
+        list(future_weather.keys()),
+        weather_by_date,
+        future_weather,
+    )
     predicted = forecast_usage(model, future_weather, future_thermostat or None)
 
     daily_high: dict[dt.date, float] = {}

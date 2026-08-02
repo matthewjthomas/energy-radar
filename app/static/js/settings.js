@@ -8,7 +8,7 @@ const HEATING_FUEL_LABELS = {
   dual: "Dual fuel",
 };
 
-function heatingFuelOptions(selected = "unknown") {
+function heatingFuelOptions(selected = "gas") {
   return Object.entries(HEATING_FUEL_LABELS)
     .map(([value, label]) => `<option value="${value}" ${value === selected ? "selected" : ""}>${label}</option>`)
     .join("");
@@ -150,11 +150,15 @@ async function loadDiscovered() {
         row.innerHTML = `
           <span>${entity.friendly_name}<br/><span class="muted">${entity.entity_id} &middot; thermostat</span></span>
           <span class="discover-actions">
-            <select class="heating-fuel-select">${heatingFuelOptions()}</select>
-            <select class="cooling-fuel-select">
-              <option value="electric">Electric cooling</option>
-              <option value="unknown">Unknown cooling</option>
-            </select>
+            <label class="discover-fuel-label">Heat
+              <select class="heating-fuel-select">${heatingFuelOptions("gas")}</select>
+            </label>
+            <label class="discover-fuel-label">Cool
+              <select class="cooling-fuel-select">
+                <option value="electric">Electric</option>
+                <option value="unknown">Unknown</option>
+              </select>
+            </label>
             <button type="button" data-entity="${entity.entity_id}" data-name="${entity.friendly_name}">Add thermostat</button>
           </span>
         `;

@@ -55,7 +55,7 @@ class DiscoveredEntity(BaseModel):
 class ThermostatConfigIn(BaseModel):
     entity_id: str
     friendly_name: str | None = None
-    heating_fuel: HeatingFuelType = HeatingFuelType.unknown
+    heating_fuel: HeatingFuelType = HeatingFuelType.gas
     cooling_fuel: CoolingFuelType = CoolingFuelType.electric
     heating_gas_fraction: float = 0.5
     enabled: bool = True

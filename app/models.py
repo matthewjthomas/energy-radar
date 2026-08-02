@@ -89,7 +89,7 @@ class ThermostatConfig(Base):
     entity_id: Mapped[str] = mapped_column(String(255), unique=True)
     friendly_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     heating_fuel: Mapped[HeatingFuelType] = mapped_column(
-        Enum(HeatingFuelType), default=HeatingFuelType.unknown
+        Enum(HeatingFuelType), default=HeatingFuelType.gas
     )
     cooling_fuel: Mapped[CoolingFuelType] = mapped_column(
         Enum(CoolingFuelType), default=CoolingFuelType.electric

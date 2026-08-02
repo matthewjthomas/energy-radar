@@ -380,6 +380,17 @@ html[data-theme="system"] .pill-ok {
   padding: 6px 8px;
 }
 
+.discover-fuel-label {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.7rem;
+  font-family: system-ui, sans-serif;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 .insight-item:last-child {
   border-bottom: none;
   padding-bottom: 0;

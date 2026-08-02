@@ -299,7 +299,7 @@ def route_model_for_source(
     heat_frac = heating_load_fraction(heating_fuel, source, gas_fraction)
     cool_frac = cooling_load_fraction(cooling_fuel, source)
     heat_pump_scale = 0.7 if heating_fuel == HeatingFuelType.heat_pump else 1.0
-    return RegressionResult(
+    routed = RegressionResult(
         intercept=model.intercept * max(heat_frac, cool_frac, 0.15 if source != SourceType.water else 0.0),
         hdd_coef=model.hdd_coef * heat_frac * heat_pump_scale,
         cdd_coef=model.cdd_coef * cool_frac,
@@ -313,6 +313,98 @@ def route_model_for_source(
         dates=model.dates,
         residuals=model.residuals,
     )
+    return enforce_weather_coefficient_signs(routed, source, heating_fuel, cooling_fuel)
+
+
+def enforce_weather_coefficient_signs(
+    model: RegressionResult,
+    source: SourceType,
+    heating_fuel: HeatingFuelType,
+    cooling_fuel: CoolingFuelType,
+) -> RegressionResult:
+    """Keep weather terms pointing the right way after collinear regression fits."""
+    hdd_coef = model.hdd_coef
+    cdd_coef = model.cdd_coef
+    heat_hours_coef = model.heat_hours_coef
+    cool_hours_coef = model.cool_hours_coef
+
+    heats_with_source = heating_load_fraction(heating_fuel, source) > 0
+    cools_with_source = cooling_load_fraction(cooling_fuel, source) > 0
+
+    if heats_with_source:
+        hdd_coef = max(hdd_coef, 0.0)
+        heat_hours_coef = max(heat_hours_coef, 0.0)
+    if cools_with_source:
+        cdd_coef = max(cdd_coef, 0.0)
+        cool_hours_coef = max(cool_hours_coef, 0.0)
+
+    return RegressionResult(
+        intercept=model.intercept,
+        hdd_coef=hdd_coef,
+        cdd_coef=cdd_coef,
+        setpoint_coef=model.setpoint_coef,
+        heat_hours_coef=heat_hours_coef,
+        cool_hours_coef=cool_hours_coef,
+        r_squared=model.r_squared,
+        n_samples=model.n_samples,
+        is_estimated=model.is_estimated,
+        estimation_method=model.estimation_method,
+        dates=model.dates,
+        residuals=model.residuals,
+    )
+
+
+def forecast_thermostat_profile(
+    thermostat_by_date: dict[dt.date, dict[str, float]],
+    days: list[dt.date],
+    historical_weather: dict[dt.date, dict[str, float]],
+    future_weather: dict[dt.date, dict[str, float]],
+) -> dict[dt.date, dict[str, float]]:
+    """Project thermostat runtime for forecast days from degree-day ratios."""
+    if not thermostat_by_date:
+        return {}
+
+    avg_setpoint = sum(v["avg_setpoint_c"] for v in thermostat_by_date.values()) / len(thermostat_by_date)
+
+    heat_hours_when_heating = [
+        thermostat_by_date[d]["heat_hours"]
+        for d in thermostat_by_date
+        if thermostat_by_date[d]["heat_hours"] > 0
+    ]
+    cool_hours_when_cooling = [
+        thermostat_by_date[d]["cool_hours"]
+        for d in thermostat_by_date
+        if thermostat_by_date[d]["cool_hours"] > 0
+    ]
+    avg_heat = float(np.mean(heat_hours_when_heating)) if heat_hours_when_heating else 0.0
+    avg_cool = float(np.mean(cool_hours_when_cooling)) if cool_hours_when_cooling else 0.0
+
+    hist_hdd = [
+        historical_weather[d]["hdd"]
+        for d in thermostat_by_date
+        if d in historical_weather and historical_weather[d]["hdd"] > 0
+    ]
+    hist_cdd = [
+        historical_weather[d]["cdd"]
+        for d in thermostat_by_date
+        if d in historical_weather and historical_weather[d]["cdd"] > 0
+    ]
+    mean_hdd = float(np.mean(hist_hdd)) if hist_hdd else 0.0
+    mean_cdd = float(np.mean(hist_cdd)) if hist_cdd else 0.0
+
+    profile: dict[dt.date, dict[str, float]] = {}
+    for day in days:
+        weather = future_weather.get(day, {})
+        hdd = weather.get("hdd", 0.0)
+        cdd = weather.get("cdd", 0.0)
+        heat_hours = avg_heat * (hdd / mean_hdd) if mean_hdd > 0 and hdd > 0 else 0.0
+        cool_hours = avg_cool * (cdd / mean_cdd) if mean_cdd > 0 and cdd > 0 else 0.0
+        profile[day] = {
+            "avg_setpoint_c": avg_setpoint,
+            "heat_hours": heat_hours,
+            "cool_hours": cool_hours,
+        }
+    return profile
 
 
 def forecast_usage(
