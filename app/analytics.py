@@ -29,15 +29,37 @@ def degree_days(avg_temp_c: float, base_c: float = DEGREE_DAY_BASE_C) -> tuple[f
 
 
 def aggregate_daily_usage(
-    readings: list[tuple[dt.datetime, float]],
+    readings: list[
+        tuple[dt.datetime, float | None]
+        | tuple[dt.datetime, float | None, float | None]
+    ],
 ) -> dict[dt.date, float]:
-    """Sum consumption values by calendar date."""
+    """Sum consumption by day, using the daily high-water mark for reset-style meters."""
+    by_day: dict[dt.date, list[tuple[dt.datetime, float | None, float | None]]] = {}
+    for entry in readings:
+        if len(entry) == 2:
+            timestamp, consumption = entry
+            raw_value = None
+        else:
+            timestamp, consumption, raw_value = entry
+        by_day.setdefault(timestamp.date(), []).append((timestamp, consumption, raw_value))
+
     totals: dict[dt.date, float] = {}
-    for timestamp, consumption in readings:
-        if consumption is None:
+    for day, points in by_day.items():
+        points_sorted = sorted(points, key=lambda p: p[0])
+        raw_values = [p[2] for p in points_sorted if p[2] is not None]
+        has_reset = any(
+            points_sorted[i][2] is not None
+            and points_sorted[i - 1][2] is not None
+            and points_sorted[i][2] < points_sorted[i - 1][2] - 0.5
+            for i in range(1, len(points_sorted))
+        )
+        if has_reset and raw_values:
+            totals[day] = max(raw_values)
             continue
-        day = timestamp.date()
-        totals[day] = totals.get(day, 0.0) + consumption
+        total = sum(p[1] for p in points_sorted if p[1] is not None)
+        if total:
+            totals[day] = total
     return totals
 
 
