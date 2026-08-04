@@ -5,12 +5,14 @@ import datetime as dt
 import logging
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.config import get_settings
 from app.db import session_scope
+from app.forecast_calibration import run_daily_forecast_calibration
 from app.ha_client import HomeAssistantClient, HomeAssistantError
 from app.models import HAEntityConfig, Location, Reading, ThermostatConfig, ThermostatReading, WeatherForecast, WeatherObservation
 from app.weather_client import get_forecast_weather, get_historical_weather
@@ -375,6 +377,14 @@ async def poll_weather_forecast() -> None:
         await session.commit()
 
 
+async def run_daily_forecast_calibration_job() -> None:
+    """Score yesterday's forecasts, refresh bias, and store today's snapshot."""
+    try:
+        await run_daily_forecast_calibration()
+    except Exception:
+        logger.exception("Daily forecast calibration failed")
+
+
 def create_scheduler() -> AsyncIOScheduler:
     settings = get_settings()
     scheduler = AsyncIOScheduler()
@@ -401,5 +411,20 @@ def create_scheduler() -> AsyncIOScheduler:
         IntervalTrigger(hours=6),
         id="poll_weather_historical",
         next_run_time=dt.datetime.now(),
+    )
+    scheduler.add_job(
+        run_daily_forecast_calibration_job,
+        CronTrigger(
+            hour=settings.forecast_calibration_hour,
+            minute=5,
+            timezone=settings.app_timezone,
+        ),
+        id="daily_forecast_calibration",
+    )
+    # Catch up after restarts if yesterday has not been scored yet.
+    scheduler.add_job(
+        run_daily_forecast_calibration_job,
+        id="forecast_calibration_startup",
+        next_run_time=dt.datetime.now() + dt.timedelta(minutes=2),
     )
     return scheduler

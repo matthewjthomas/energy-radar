@@ -182,6 +182,8 @@ def fit_usage_model(
     usage_by_date: dict[dt.date, float],
     weather_by_date: dict[dt.date, dict[str, float]],
     thermostat_by_date: dict[dt.date, dict[str, float]] | None = None,
+    recency_half_life_days: float | None = None,
+    reference_date: dt.date | None = None,
 ) -> RegressionResult | None:
     """Fit usage against HDD/CDD and optional thermostat features via least squares."""
     dates = _aligned_days(usage_by_date, weather_by_date, thermostat_by_date)
@@ -200,7 +202,16 @@ def fit_usage_model(
         columns.extend([x_setpoint, x_heat, x_cool])
 
     design = np.column_stack(columns)
-    coeffs, _, _, _ = np.linalg.lstsq(design, y, rcond=None)
+    y_fit = y
+    if recency_half_life_days and recency_half_life_days > 0:
+        ref = reference_date or max(dates)
+        ages = np.array([(ref - d).days for d in dates], dtype=float)
+        weights = np.exp(-ages * np.log(2) / recency_half_life_days)
+        sqrt_w = np.sqrt(weights)
+        design = design * sqrt_w[:, np.newaxis]
+        y_fit = y * sqrt_w
+
+    coeffs, _, _, _ = np.linalg.lstsq(design, y_fit, rcond=None)
 
     intercept = float(coeffs[0])
     hdd_coef = float(coeffs[1])
@@ -209,7 +220,8 @@ def fit_usage_model(
     heat_hours_coef = float(coeffs[4]) if thermostat_by_date else 0.0
     cool_hours_coef = float(coeffs[5]) if thermostat_by_date else 0.0
 
-    predictions = design @ coeffs
+    raw_design = np.column_stack(columns)
+    predictions = raw_design @ coeffs
     residuals = y - predictions
     ss_res = float(np.sum(residuals**2))
     ss_tot = float(np.sum((y - np.mean(y)) ** 2))
@@ -425,6 +437,37 @@ def forecast_usage(
         )
         predicted[day] = max(value, 0.0)
     return predicted
+
+
+def compute_forecast_errors(
+    predicted: list[float], actual: list[float]
+) -> list[float]:
+    """Return per-sample errors as predicted minus actual."""
+    return [p - a for p, a in zip(predicted, actual)]
+
+
+def compute_mape(predicted: list[float], actual: list[float]) -> float | None:
+    """Mean absolute percentage error, skipping zero actuals."""
+    pct_errors = []
+    for pred, act in zip(predicted, actual):
+        if act == 0:
+            continue
+        pct_errors.append(abs((act - pred) / act) * 100)
+    if not pct_errors:
+        return None
+    return float(np.mean(pct_errors))
+
+
+def compute_rmse(predicted: list[float], actual: list[float]) -> float | None:
+    if not predicted:
+        return None
+    errors = np.array([p - a for p, a in zip(predicted, actual)])
+    return float(np.sqrt(np.mean(errors**2)))
+
+
+def apply_bias_correction(predicted: float, bias_offset: float) -> float:
+    """Subtract rolling over-prediction bias; bias_offset is mean(predicted - actual)."""
+    return max(predicted - bias_offset, 0.0)
 
 
 def detect_trend_shifts(

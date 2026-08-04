@@ -178,3 +178,42 @@ class EventMarker(Base):
     created_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: dt.datetime.now(dt.timezone.utc)
     )
+
+
+class UsageForecastSnapshot(Base):
+    """Daily stored usage forecast for a target date, scored once actuals arrive."""
+
+    __tablename__ = "usage_forecast_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "issued_date", "forecast_date", "source_type", name="uq_forecast_snapshot"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    issued_date: Mapped[dt.date] = mapped_column(Date)
+    forecast_date: Mapped[dt.date] = mapped_column(Date)
+    source_type: Mapped[SourceType] = mapped_column(Enum(SourceType))
+    predicted_value: Mapped[float] = mapped_column(Float)
+    actual_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    scored_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: dt.datetime.now(dt.timezone.utc)
+    )
+
+
+class ForecastBias(Base):
+    """Rolling forecast error summary used to bias-correct live predictions."""
+
+    __tablename__ = "forecast_bias"
+
+    source_type: Mapped[SourceType] = mapped_column(Enum(SourceType), primary_key=True)
+    bias_offset: Mapped[float] = mapped_column(Float, default=0.0)
+    mape_7d: Mapped[float | None] = mapped_column(Float, nullable=True)
+    rmse_7d: Mapped[float | None] = mapped_column(Float, nullable=True)
+    mape_30d: Mapped[float | None] = mapped_column(Float, nullable=True)
+    rmse_30d: Mapped[float | None] = mapped_column(Float, nullable=True)
+    scored_samples: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: dt.datetime.now(dt.timezone.utc)
+    )
