@@ -77,12 +77,6 @@ docker pull ghcr.io/matthewjthomas/energy-radar:1.0.0
 IMAGE=ghcr.io/matthewjthomas/energy-radar:1.0.0 docker compose up -d
 ```
 
-On the [GHCR package page](https://github.com/users/matthewjthomas/packages/container/energy-radar), the install
-command reflects whichever tag you are viewing — open the **`latest`** tag (or follow
-[latest directly](https://github.com/users/matthewjthomas/packages/container/energy-radar?tag=latest))
-to see the `docker pull ...:latest` command. The version number shown in the header (e.g. `1.0.0`) is
-the current release; `latest` always points at that same image.
-
 ### Reverse proxy / subpath
 
 If you expose the app behind a path prefix (e.g. `https://home.example.com/energy/`), set:
