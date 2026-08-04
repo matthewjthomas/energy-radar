@@ -350,4 +350,34 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
   }
+
+  const forecastResetBtn = document.getElementById("forecast-reset-btn");
+  if (forecastResetBtn) {
+    forecastResetBtn.addEventListener("click", async (e) => {
+      const confirmed = window.confirm(
+        "Clear all stored forecast scores and learned bias? Live forecasts will rebuild without historical calibration."
+      );
+      if (!confirmed) return;
+
+      const btn = e.currentTarget;
+      const status = document.getElementById("forecast-reset-status");
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "Resetting…";
+      status.textContent = "";
+      status.className = "settings-status";
+      try {
+        await Api.post("/api/settings/maintenance/forecast/reset", {});
+        status.textContent = "Forecast calibration cleared.";
+        status.className = "settings-status ok";
+      } catch (err) {
+        status.textContent = "Reset failed.";
+        status.className = "settings-status error";
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+        setTimeout(() => { status.textContent = ""; status.className = "settings-status"; }, 5000);
+      }
+    });
+  }
 });
