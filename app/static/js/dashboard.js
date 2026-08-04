@@ -153,11 +153,21 @@ async function loadForecast(sources, units, hvac) {
     ? "electricity"
     : forecastSources[0];
   try {
-    const forecast = await Api.get(`/api/forecast/usage?source=${source}&days=14`);
+    const [forecast, biasRows] = await Promise.all([
+      Api.get(`/api/forecast/usage?source=${source}&days=14`),
+      Api.get("/api/forecast/bias").catch(() => []),
+    ]);
     const estimated = forecast.some((p) => p.is_estimated);
-    status.textContent = estimated
+    const bias = (biasRows || []).find((row) => row.source_type === source);
+    let statusText = estimated
       ? `Estimated ${SOURCE_LABELS[source] || source} for the next 14 days using thermostat setpoint, runtime, and forecast weather (no meter data).`
       : "Predicted usage for the next 14 days, based on forecast weather and thermostat history when available.";
+    if (bias && bias.scored_samples >= 3 && bias.mape_30d != null) {
+      statusText += ` Calibrated from ${bias.scored_samples} scored day${bias.scored_samples === 1 ? "" : "s"} (30-day MAPE ${fmtNumber(bias.mape_30d, 1)}%).`;
+    } else if (bias && bias.scored_samples > 0) {
+      statusText += " Forecast calibration is learning from recent actuals.";
+    }
+    status.textContent = statusText;
     renderForecastChart("forecast-chart", forecast, source, units[source]);
   } catch (e) {
     status.textContent = "Still collecting data \u2014 forecasts need meter history or a mapped thermostat with a few days of readings.";

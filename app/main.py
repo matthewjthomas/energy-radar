@@ -16,21 +16,25 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    await init_db()
-    scheduler = create_scheduler()
-    scheduler.start()
-    logger.info("Energy Radar started; background scheduler running.")
-    try:
-        yield
-    finally:
-        scheduler.shutdown(wait=False)
-
-
-def create_app() -> FastAPI:
+def create_app(*, enable_scheduler: bool = True) -> FastAPI:
     cfg = get_settings()
     base = cfg.base_path
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        await init_db()
+        scheduler = None
+        if enable_scheduler:
+            scheduler = create_scheduler()
+            scheduler.start()
+            logger.info("Energy Radar started; background scheduler running.")
+        else:
+            logger.info("Energy Radar started (scheduler disabled).")
+        try:
+            yield
+        finally:
+            if scheduler is not None:
+                scheduler.shutdown(wait=False)
 
     application = FastAPI(title="Energy Radar", lifespan=lifespan)
 

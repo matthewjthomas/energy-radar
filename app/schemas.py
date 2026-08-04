@@ -128,9 +128,33 @@ class WeatherPoint(BaseModel):
 class ForecastPoint(BaseModel):
     date: dt.date
     predicted_value: float
+    raw_predicted_value: float | None = None
+    bias_correction: float | None = None
     predicted_cost: float | None = None
     high_temp_c: float | None = None
     is_estimated: bool = False
+
+
+class ForecastBiasOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    source_type: SourceType
+    bias_offset: float
+    mape_7d: float | None
+    rmse_7d: float | None
+    mape_30d: float | None
+    rmse_30d: float | None
+    scored_samples: int
+    updated_at: dt.datetime
+
+
+class ForecastAccuracyPoint(BaseModel):
+    forecast_date: dt.date
+    issued_date: dt.date
+    predicted_value: float
+    actual_value: float
+    error: float
+    abs_pct_error: float | None = None
 
 
 class TrendShift(BaseModel):

@@ -26,6 +26,8 @@ There is no login/auth on the web UI — it's meant for local/home network use.
 - History page with a calendar range picker to explore any date range.
 - Weather-correlated forecast of usage (and estimated cost, if you set a price per unit) for
   the next up to 16 days, using the Open-Meteo forecast.
+- Daily forecast calibration: stores predictions, scores them against the previous day's
+  actual usage, tracks MAPE/RMSE, and bias-corrects live forecasts.
 - Automatic detection of trend shifts in usage that aren't explained by weather alone.
 - User-added event markers with before/after impact analysis.
 
@@ -65,6 +67,31 @@ location /energy/ {
   proxy_set_header X-Forwarded-Prefix /energy;
 }
 ```
+
+## Development and tests
+
+Local dev builds from source (instead of pulling GHCR):
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -d
+```
+
+Run the test suite (starts TimescaleDB on port **5433** if it is not already running):
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d db
+make install-dev
+make test-cov
+```
+
+Or:
+
+```sh
+TEST_DATABASE_URL=postgresql+asyncpg://energyradar:changeme@localhost:5433/energyradar pytest
+```
+
+GitHub Actions runs `pytest` on every pull request and push to `main` (`.github/workflows/test.yml`),
+including a Docker smoke test that builds the image and hits `/health`.
 
 `/health` remains available at both `/health` and `{APP_BASE_PATH}/health`.
 

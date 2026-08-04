@@ -30,6 +30,13 @@ class Settings(BaseSettings):
     # as large as ha_stats_lookback_days so the regression model can use all
     # available electricity/gas/water history.
     weather_lookback_days: int = 395
+    # Daily forecast calibration (local timezone hour, 0-23).
+    forecast_calibration_hour: int = 6
+    forecast_store_days: int = 14
+    forecast_bias_window_days: int = 30
+    forecast_bias_short_window_days: int = 7
+    # Exponential half-life for weighting recent days more heavily in regression.
+    forecast_recency_half_life_days: int = 90
 
     @property
     def ha_configured(self) -> bool:

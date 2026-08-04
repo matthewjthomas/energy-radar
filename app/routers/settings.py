@@ -9,7 +9,13 @@ from app.config import get_settings
 from app.db import get_session
 from app.ha_client import HomeAssistantClient
 from app.models import EventMarker, HAEntityConfig, Location, PricingConfig, ThermostatConfig
-from app.scheduler import poll_ha_readings, poll_thermostat_readings, poll_weather_forecast, poll_weather_historical
+from app.scheduler import (
+    poll_ha_readings,
+    poll_thermostat_readings,
+    poll_weather_forecast,
+    poll_weather_historical,
+    run_daily_forecast_calibration_job,
+)
 from app.schemas import (
     DiscoveredEntity,
     EventMarkerIn,
@@ -194,6 +200,7 @@ async def trigger_refresh(background_tasks: BackgroundTasks):
     background_tasks.add_task(poll_thermostat_readings)
     background_tasks.add_task(poll_weather_historical)
     background_tasks.add_task(poll_weather_forecast)
+    background_tasks.add_task(run_daily_forecast_calibration_job)
     return {"ok": True}
 
 

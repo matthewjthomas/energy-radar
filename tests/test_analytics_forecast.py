@@ -36,6 +36,7 @@ def test_gas_heat_electric_cool_forecast_rises_with_temperature():
         cdd_coef=-0.5,
         cool_hours_coef=1.2,
         heat_hours_coef=0.8,
+        r_squared=0.8,
         n_samples=30,
     )
     routed = route_model_for_source(
@@ -104,6 +105,7 @@ def test_enforce_weather_coefficient_signs_clamps_negative_cooling():
         hdd_coef=0.0,
         cdd_coef=-1.5,
         cool_hours_coef=-0.2,
+        r_squared=0.3,
         n_samples=10,
     )
     fixed = enforce_weather_coefficient_signs(
