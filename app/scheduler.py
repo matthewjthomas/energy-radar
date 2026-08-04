@@ -7,7 +7,7 @@ import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.config import get_settings
@@ -26,14 +26,6 @@ _INSERT_BATCH_SIZE = 500
 _WEATHER_BACKFILL_CHUNK_DAYS = 30
 # Raw HA history is more reliable than long-term statistics for the current day.
 _RECENT_HISTORY_HOURS = 72
-
-
-def _local_today_start_utc() -> dt.datetime:
-    from zoneinfo import ZoneInfo
-
-    tz = ZoneInfo(get_settings().app_timezone)
-    today = dt.datetime.now(tz).date()
-    return dt.datetime.combine(today, dt.time.min, tzinfo=tz).astimezone(dt.timezone.utc)
 
 
 def _batched(items: list, size: int):
@@ -95,21 +87,6 @@ def _rows_from_history_points(
     return rows
 
 
-def _merge_reading_rows(*groups: list[dict]) -> list[dict]:
-    """Merge reading rows, preferring rows with a computed consumption value."""
-    merged: dict[tuple[dt.datetime, str, str], dict] = {}
-    for rows in groups:
-        for row in rows:
-            key = (row["time"], row["source_type"].value, row["entity_id"])
-            existing = merged.get(key)
-            if existing is None:
-                merged[key] = row
-                continue
-            if existing.get("consumption") is None and row.get("consumption") is not None:
-                merged[key] = row
-    return list(merged.values())
-
-
 async def _upsert_readings(session, rows: list[dict]) -> None:
     if not rows:
         return
@@ -123,6 +100,16 @@ async def _upsert_readings(session, rows: list[dict]) -> None:
             },
         )
         await session.execute(stmt)
+
+
+async def _clear_recent_readings(session, cfg: HAEntityConfig, since: dt.datetime) -> None:
+    await session.execute(
+        delete(Reading).where(
+            Reading.entity_id == cfg.entity_id,
+            Reading.source_type == cfg.source_type,
+            Reading.time >= since,
+        )
+    )
 
 
 async def _rows_from_statistics(
@@ -244,46 +231,50 @@ async def poll_ha_readings() -> None:
                 if last_reading
                 else now - dt.timedelta(days=settings.ha_stats_lookback_days)
             )
-            today_start = _local_today_start_utc()
-            if stats_start > today_start:
-                stats_start = today_start
+            recent_start = now - dt.timedelta(hours=_RECENT_HISTORY_HOURS)
 
-            stats_rows = await _rows_from_statistics(client, cfg, stats_start, now, last_reading)
+            stats_rows: list[dict] | None = None
+            if stats_start < recent_start:
+                stats_rows = await _rows_from_statistics(
+                    client, cfg, stats_start, recent_start, last_reading
+                )
 
             history_rows: list[dict] = []
             try:
-                history_points = await client.get_history(
-                    cfg.entity_id, now - dt.timedelta(hours=_RECENT_HISTORY_HOURS), now
-                )
+                history_points = await client.get_history(cfg.entity_id, recent_start, now)
                 history_rows = _rows_from_history_points(cfg, history_points)
             except HomeAssistantError:
                 logger.warning("Failed to fetch recent HA history for %s", cfg.entity_id, exc_info=True)
 
             if stats_rows is None:
-                if history_rows:
-                    rows = history_rows
-                    logger.info("Fetched %d raw-history rows for %s", len(rows), cfg.entity_id)
-                else:
-                    history_start = last_reading.time if last_reading else now - dt.timedelta(days=2)
-                    try:
-                        history_points = await client.get_history(cfg.entity_id, history_start, now)
-                    except HomeAssistantError:
-                        logger.warning("Failed to fetch HA history for %s", cfg.entity_id, exc_info=True)
-                        continue
-                    rows = _rows_from_history(cfg, history_points, last_reading)
-                    logger.info("Fetched %d raw-history rows for %s", len(rows), cfg.entity_id)
-            else:
-                rows = _merge_reading_rows(stats_rows, history_rows)
-                logger.info(
-                    "Fetched %d rows for %s (%d stats, %d recent history)",
-                    len(rows),
-                    cfg.entity_id,
-                    len(stats_rows),
-                    len(history_rows),
-                )
+                # No long-term statistics — incremental raw history only.
+                history_start = last_reading.time if last_reading else now - dt.timedelta(days=2)
+                try:
+                    history_points = await client.get_history(cfg.entity_id, history_start, now)
+                except HomeAssistantError:
+                    logger.warning("Failed to fetch HA history for %s", cfg.entity_id, exc_info=True)
+                    continue
+                rows = _rows_from_history(cfg, history_points, last_reading)
+                logger.info("Fetched %d raw-history rows for %s", len(rows), cfg.entity_id)
+                if rows:
+                    await _upsert_readings(session, rows)
+                continue
 
-            if rows:
-                await _upsert_readings(session, rows)
+            # Stats for older data, raw history for the recent window — never both.
+            await _clear_recent_readings(session, cfg, recent_start)
+            stats_rows = [row for row in stats_rows if row["time"] < recent_start]
+            if stats_rows:
+                await _upsert_readings(session, stats_rows)
+            if history_rows:
+                await _upsert_readings(session, history_rows)
+            logger.info(
+                "Fetched %d rows for %s (%d stats before %s, %d recent history)",
+                len(stats_rows) + len(history_rows),
+                cfg.entity_id,
+                len(stats_rows),
+                recent_start.isoformat(),
+                len(history_rows),
+            )
 
         await session.commit()
 
