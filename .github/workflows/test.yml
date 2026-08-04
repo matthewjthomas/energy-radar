@@ -4,20 +4,14 @@ on:
   pull_request:
     paths-ignore:
       - "**.md"
+      - "docs/**"
       - ".gitignore"
       - ".env.example"
-  push:
-    branches:
-      - main
-    paths-ignore:
-      - "**.md"
-      - ".gitignore"
-      - ".env.example"
+      - "VERSION"
 
 jobs:
   unit-and-integration:
     runs-on: ubuntu-latest
-    # API and DB integration tests require TimescaleDB; pure analytics tests run too.
     services:
       db:
         image: timescale/timescaledb:latest-pg16

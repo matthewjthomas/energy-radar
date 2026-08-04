@@ -6,8 +6,10 @@ on:
       - main
     paths-ignore:
       - '**.md'
+      - 'docs/**'
       - '.gitignore'
       - '.env.example'
+      - 'VERSION'
   workflow_dispatch:
 
 concurrency:
@@ -19,8 +21,96 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  release:
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.head_commit && !contains(github.event.head_commit.message, '[skip ci]')) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine next semantic version
+        id: version
+        run: |
+          git fetch --tags --force
+          LATEST_TAG="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1)"
+
+          if [ -z "${LATEST_TAG}" ]; then
+            MAJOR=1
+            MINOR=0
+            PATCH=0
+          else
+            VERSION="${LATEST_TAG#v}"
+            MAJOR="${VERSION%%.*}"
+            REST="${VERSION#*.}"
+            MINOR="${REST%%.*}"
+            PATCH="${REST#*.}"
+            PATCH="${PATCH%%-*}"
+
+            BUMP="patch"
+            COMMIT_MSG="$(git log -1 --pretty=%B)"
+            if echo "${COMMIT_MSG}" | grep -qiE '\[major\]|BREAKING CHANGE'; then
+              BUMP="major"
+            elif echo "${COMMIT_MSG}" | grep -qiE '\[minor\]'; then
+              BUMP="minor"
+            fi
+
+            case "${BUMP}" in
+              major)
+                MAJOR=$((MAJOR + 1))
+                MINOR=0
+                PATCH=0
+                ;;
+              minor)
+                MINOR=$((MINOR + 1))
+                PATCH=0
+                ;;
+              patch)
+                PATCH=$((PATCH + 1))
+                ;;
+            esac
+          fi
+
+          NEXT="${MAJOR}.${MINOR}.${PATCH}"
+          echo "version=${NEXT}" >> "${GITHUB_OUTPUT}"
+          echo "tag=v${NEXT}" >> "${GITHUB_OUTPUT}"
+          echo "Next release: v${NEXT}"
+
+      - name: Create release tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git rev-parse "${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+            echo "Tag ${{ steps.version.outputs.tag }} already exists; skipping tag creation."
+            exit 0
+          fi
+          git tag -a "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.tag }}"
+          git push origin "${{ steps.version.outputs.tag }}"
+
+      - name: Update VERSION file
+        run: echo "${{ steps.version.outputs.version }}" > VERSION
+
+      - name: Commit VERSION bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add VERSION
+          git diff --staged --quiet && exit 0
+          git commit -m "chore: release ${{ steps.version.outputs.tag }} [skip ci]"
+          git push origin HEAD:main
+
   build-and-push:
     runs-on: ubuntu-latest
+    needs: release
     permissions:
       contents: read
       packages: write
@@ -28,6 +118,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.tag }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -48,9 +140,9 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=ref,event=branch
-            type=sha,prefix={{branch}}-
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ needs.release.outputs.tag }}
+            type=raw,value=${{ needs.release.outputs.version }}
+            type=raw,value=latest,enable=true
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
