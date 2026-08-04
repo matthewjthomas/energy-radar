@@ -1,5 +1,7 @@
 # Energy Radar
 
+![Energy Radar dashboard](docs/images/dashboard.png)
+
 A predictive and historical view of energy usage in your home, correlating **electricity**,
 **gas**, and **water** consumption (pulled from Home Assistant) with weather data from
 [Open-Meteo](https://open-meteo.com/) (free, no API key required). Each utility source is
@@ -90,12 +92,12 @@ Or:
 TEST_DATABASE_URL=postgresql+asyncpg://energyradar:changeme@localhost:5433/energyradar pytest
 ```
 
-GitHub Actions runs `pytest` on every pull request and push to `main` (`.github/workflows/test.yml`),
+GitHub Actions runs `pytest` on every **pull request** (`.github/workflows/test.yml`),
 including a Docker smoke test that builds the image and hits `/health`.
 
 `/health` remains available at both `/health` and `{APP_BASE_PATH}/health`.
 
-## Development
+## Local development
 
 ```sh
 python3 -m venv .venv && source .venv/bin/activate
@@ -107,5 +109,16 @@ uvicorn app.main:app --reload
 ## Container images
 
 Images are built and pushed to `ghcr.io/<owner>/energy-radar` by
-[.github/workflows/docker-build.yml](.github/workflows/docker-build.yml) on every push to `main`.
+[.github/workflows/docker-build.yml](.github/workflows/docker-build.yml) on every merge to `main`.
 
+Each merge creates a new **semantic version tag** (`v1.0.0`, `v1.0.1`, …) and publishes:
+
+| Tag | Example |
+|-----|---------|
+| Version | `ghcr.io/<owner>/energy-radar:1.0.0` |
+| Git tag | `ghcr.io/<owner>/energy-radar:v1.0.0` |
+| Latest | `ghcr.io/<owner>/energy-radar:latest` |
+
+By default each merge bumps the **patch** version. Include `[minor]` or `[major]` in the merge
+commit message to bump those instead (or `BREAKING CHANGE` for a major bump). The initial release
+is **v1.0.0**.
