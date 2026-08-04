@@ -4,7 +4,11 @@ from __future__ import annotations
 import datetime as dt
 
 from app.models import SourceType
-from app.scheduler import _recent_history_start, _rows_from_history_points
+from app.scheduler import (
+    _merge_latest_state,
+    _recent_history_start,
+    _rows_from_history_points,
+)
 
 
 class _Cfg:
@@ -31,3 +35,25 @@ def test_rows_from_history_points_computes_daily_reset_deltas():
     assert rows[0]["consumption"] is None
     assert rows[1]["consumption"] == 3.0
     assert rows[2]["consumption"] == 3.0
+
+
+def test_merge_latest_state_appends_newer_live_reading():
+    points = [
+        (dt.datetime(2026, 8, 4, 12, tzinfo=dt.timezone.utc), 20.0),
+    ]
+    latest = (dt.datetime(2026, 8, 4, 18, tzinfo=dt.timezone.utc), 51.2)
+
+    merged = _merge_latest_state(points, latest)
+
+    assert merged[-1] == latest
+    assert len(merged) == 2
+
+
+def test_merge_latest_state_replaces_same_timestamp():
+    ts = dt.datetime(2026, 8, 4, 18, tzinfo=dt.timezone.utc)
+    points = [(ts, 40.0)]
+    latest = (ts, 51.2)
+
+    merged = _merge_latest_state(points, latest)
+
+    assert merged == [latest]

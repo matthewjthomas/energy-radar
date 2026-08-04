@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.config import get_settings
@@ -101,6 +101,19 @@ def _rows_from_history_points(
     return rows
 
 
+def _merge_latest_state(
+    points: list[tuple[dt.datetime, float]],
+    latest: tuple[dt.datetime, float] | None,
+) -> list[tuple[dt.datetime, float]]:
+    """Ensure the live HA state is present even when history is sparse."""
+    if latest is None:
+        return points
+    timestamp, value = latest
+    merged = [point for point in points if point[0] != timestamp]
+    merged.append((timestamp, value))
+    return merged
+
+
 async def _upsert_readings(session, rows: list[dict]) -> None:
     if not rows:
         return
@@ -110,7 +123,9 @@ async def _upsert_readings(session, rows: list[dict]) -> None:
             index_elements=["time", "source_type", "entity_id"],
             set_={
                 "raw_value": stmt.excluded.raw_value,
-                "consumption": func.coalesce(stmt.excluded.consumption, Reading.consumption),
+                # Always overwrite consumption. Coalescing preserved stale deltas
+                # when a later pass recomputed a midnight reset as None.
+                "consumption": stmt.excluded.consumption,
             },
         )
         await session.execute(stmt)
@@ -250,9 +265,17 @@ async def poll_ha_readings() -> None:
             history_rows: list[dict] = []
             try:
                 history_points = await client.get_history(cfg.entity_id, recent_start, now)
-                history_rows = _rows_from_history_points(cfg, history_points)
             except HomeAssistantError:
                 logger.warning("Failed to fetch recent HA history for %s", cfg.entity_id, exc_info=True)
+                history_points = []
+            else:
+                try:
+                    latest_state = await client.get_latest_state(cfg.entity_id)
+                except Exception:
+                    logger.warning("Failed to fetch latest HA state for %s", cfg.entity_id, exc_info=True)
+                    latest_state = None
+                history_points = _merge_latest_state(history_points, latest_state)
+                history_rows = _rows_from_history_points(cfg, history_points)
 
             # Always probe statistics up to the calendar boundary. This avoids
             # guessing based on the latest row, which may itself be raw history.
@@ -273,6 +296,12 @@ async def poll_ha_readings() -> None:
                 except HomeAssistantError:
                     logger.warning("Failed to fetch HA history for %s", cfg.entity_id, exc_info=True)
                     continue
+                try:
+                    latest_state = await client.get_latest_state(cfg.entity_id)
+                except Exception:
+                    logger.warning("Failed to fetch latest HA state for %s", cfg.entity_id, exc_info=True)
+                    latest_state = None
+                history_points = _merge_latest_state(history_points, latest_state)
                 rows = _rows_from_history(cfg, history_points, last_reading)
                 logger.info("Fetched %d raw-history rows for %s", len(rows), cfg.entity_id)
                 if rows:
