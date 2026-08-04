@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from statistics import median
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
@@ -12,6 +13,7 @@ from app.analytics import (
     aggregate_daily_thermostat,
     aggregate_daily_usage,
     aggregate_daily_weather,
+    filter_usage_outliers,
     fit_proxy_model_from_thermostat,
     fit_usage_model,
     forecast_thermostat_profile,
@@ -210,13 +212,19 @@ async def build_usage_model(
     today = dt.datetime.now(tz).date()
     full_days = full_usage_days(readings, today)
 
-    usage_by_date = {d: v for d, v in aggregate_daily_usage(readings).items() if d in full_days}
+    usage_by_date = {
+        d: v for d, v in aggregate_daily_usage(readings).items() if d in full_days
+    }
+    usage_by_date = filter_usage_outliers(usage_by_date)
     weather_by_date = aggregate_daily_weather(weather)
     weather_by_date = {d: w for d, w in weather_by_date.items() if d < today}
 
     model = None
     if len(usage_by_date) >= 3:
-        thermo_subset = thermostat_by_date if thermostat_by_date else None
+        overlapping_thermostat_days = set(usage_by_date) & set(thermostat_by_date)
+        # Six regression terms with only a few thermostat days is underdetermined
+        # and can extrapolate wildly. Use weather-only until enough overlap exists.
+        thermo_subset = thermostat_by_date if len(overlapping_thermostat_days) >= 14 else None
         model = fit_usage_model(
             usage_by_date,
             weather_by_date,
@@ -258,7 +266,9 @@ async def generate_raw_usage_forecast(
     as_of: dt.datetime | None = None,
 ) -> tuple[dict[dt.date, float], RegressionResult, dict[dt.date, float]]:
     """Project usage from the fitted model and current weather forecast."""
-    model, _, weather_by_date, thermostat_by_date, _ = await build_usage_model(session, source)
+    model, usage_by_date, weather_by_date, thermostat_by_date, _ = await build_usage_model(
+        session, source
+    )
     if model is None:
         raise ValueError("Not enough historical data yet to build a forecast.")
 
@@ -277,6 +287,14 @@ async def generate_raw_usage_forecast(
         future_weather,
     )
     predicted = forecast_usage(model, future_weather, future_thermostat or None)
+    positive_usage = [value for value in usage_by_date.values() if value > 0]
+    if positive_usage:
+        typical_usage = float(median(positive_usage))
+        maximum_reasonable = typical_usage * 3.0
+        predicted = {
+            day: min(value, maximum_reasonable)
+            for day, value in predicted.items()
+        }
 
     daily_high: dict[dt.date, float] = {}
     for record in fc_records:

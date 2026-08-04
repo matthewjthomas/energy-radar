@@ -8,6 +8,7 @@ from app.analytics import (
     aggregate_daily_weather,
     degree_days,
     detect_trend_shifts,
+    filter_usage_outliers,
     fit_usage_model,
 )
 
@@ -50,6 +51,17 @@ def test_aggregate_daily_usage_accepts_database_reading_triples():
         (dt.datetime(2026, 8, 3, 3, tzinfo=dt.timezone.utc), 6.0, 11.0),
     ]
     assert aggregate_daily_usage(readings)[dt.date(2026, 8, 3)] == 10.0
+
+
+def test_filter_usage_outliers_removes_corrupted_spike():
+    start = dt.date(2026, 7, 28)
+    usage = {
+        start + dt.timedelta(days=index): value
+        for index, value in enumerate([72.0, 68.0, 75.0, 5734.0, 64.0, 71.0])
+    }
+    filtered = filter_usage_outliers(usage)
+    assert len(filtered) == 5
+    assert 5734.0 not in filtered.values()
 
 
 def test_aggregate_daily_weather_averages_temperature():

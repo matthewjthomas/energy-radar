@@ -14,7 +14,8 @@ def test_scoring_issued_date_is_one_day_ahead():
 
 def test_apply_bias_correction_reduces_over_prediction():
     assert apply_bias_correction(70.0, 5.0) == 65.0
-    assert apply_bias_correction(3.0, 5.0) == 0.0
+    assert apply_bias_correction(3.0, 5.0) == 1.5
+    assert apply_bias_correction(70.0, -5600.0) == 105.0
 
 
 def test_apply_source_bias_per_day():

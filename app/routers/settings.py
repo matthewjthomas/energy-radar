@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db import get_session
+from app.forecast_calibration import reset_forecast_calibration
 from app.ha_client import HomeAssistantClient
 from app.models import EventMarker, HAEntityConfig, Location, PricingConfig, ThermostatConfig
 from app.scheduler import (
@@ -201,6 +202,14 @@ async def trigger_refresh(background_tasks: BackgroundTasks):
     background_tasks.add_task(poll_weather_historical)
     background_tasks.add_task(poll_weather_forecast)
     background_tasks.add_task(run_daily_forecast_calibration_job)
+    return {"ok": True}
+
+
+@router.post("/maintenance/forecast/reset")
+async def reset_forecast(session: AsyncSession = Depends(get_session)):
+    """Clear contaminated forecast scores and learned bias."""
+    await reset_forecast_calibration(session)
+    await session.commit()
     return {"ok": True}
 
 

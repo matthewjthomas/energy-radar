@@ -74,6 +74,25 @@ def aggregate_monthly_usage(
     return monthly
 
 
+def filter_usage_outliers(
+    usage_by_date: dict[dt.date, float],
+    max_median_multiple: float = 6.0,
+) -> dict[dt.date, float]:
+    """Drop extreme high readings that are likely ingestion corruption."""
+    positive = [value for value in usage_by_date.values() if value > 0]
+    if len(positive) < 4:
+        return usage_by_date.copy()
+    median = float(np.median(positive))
+    if median <= 0:
+        return usage_by_date.copy()
+    upper = median * max_median_multiple
+    return {
+        day: value
+        for day, value in usage_by_date.items()
+        if value <= upper
+    }
+
+
 def aggregate_monthly_avg_temp(
     weather_by_date: dict[dt.date, dict[str, float]],
 ) -> dict[tuple[int, int], float]:
@@ -488,8 +507,10 @@ def compute_rmse(predicted: list[float], actual: list[float]) -> float | None:
 
 
 def apply_bias_correction(predicted: float, bias_offset: float) -> float:
-    """Subtract rolling over-prediction bias; bias_offset is mean(predicted - actual)."""
-    return max(predicted - bias_offset, 0.0)
+    """Apply bias without allowing calibration to overwhelm the base model."""
+    max_adjustment = abs(predicted) * 0.5
+    bounded_bias = min(max(bias_offset, -max_adjustment), max_adjustment)
+    return max(predicted - bounded_bias, 0.0)
 
 
 def detect_trend_shifts(
