@@ -233,12 +233,6 @@ async def poll_ha_readings() -> None:
             )
             recent_start = now - dt.timedelta(hours=_RECENT_HISTORY_HOURS)
 
-            stats_rows: list[dict] | None = None
-            if stats_start < recent_start:
-                stats_rows = await _rows_from_statistics(
-                    client, cfg, stats_start, recent_start, last_reading
-                )
-
             history_rows: list[dict] = []
             try:
                 history_points = await client.get_history(cfg.entity_id, recent_start, now)
@@ -246,8 +240,19 @@ async def poll_ha_readings() -> None:
             except HomeAssistantError:
                 logger.warning("Failed to fetch recent HA history for %s", cfg.entity_id, exc_info=True)
 
-            if stats_rows is None:
-                # No long-term statistics — incremental raw history only.
+            uses_statistics = True
+            stats_rows: list[dict] = []
+            if stats_start < recent_start:
+                fetched = await _rows_from_statistics(
+                    client, cfg, stats_start, recent_start, last_reading
+                )
+                if fetched is None:
+                    uses_statistics = False
+                else:
+                    stats_rows = fetched
+
+            if not uses_statistics:
+                # Entity has no long-term statistics — incremental raw history only.
                 history_start = last_reading.time if last_reading else now - dt.timedelta(days=2)
                 try:
                     history_points = await client.get_history(cfg.entity_id, history_start, now)
@@ -260,20 +265,21 @@ async def poll_ha_readings() -> None:
                     await _upsert_readings(session, rows)
                 continue
 
-            # Stats for older data, raw history for the recent window — never both.
+            # Entity uses statistics for older data; always refresh the recent window
+            # from raw history so we don't double-count stats + state-change rows.
             await _clear_recent_readings(session, cfg, recent_start)
-            stats_rows = [row for row in stats_rows if row["time"] < recent_start]
-            if stats_rows:
-                await _upsert_readings(session, stats_rows)
             if history_rows:
                 await _upsert_readings(session, history_rows)
+            if stats_rows:
+                older_stats = [row for row in stats_rows if row["time"] < recent_start]
+                if older_stats:
+                    await _upsert_readings(session, older_stats)
             logger.info(
-                "Fetched %d rows for %s (%d stats before %s, %d recent history)",
-                len(stats_rows) + len(history_rows),
+                "Refreshed %s: %d recent history rows (%s -> now), %d older stats rows",
                 cfg.entity_id,
-                len(stats_rows),
-                recent_start.isoformat(),
                 len(history_rows),
+                recent_start.isoformat(),
+                len(stats_rows),
             )
 
         await session.commit()

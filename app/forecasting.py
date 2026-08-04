@@ -100,13 +100,13 @@ async def readings_for_source(
 ) -> list[tuple[dt.datetime, float]]:
     rows = (
         await session.execute(
-            select(Reading.time, Reading.consumption).where(
+            select(Reading.time, Reading.consumption, Reading.raw_value).where(
                 Reading.source_type == source, Reading.time >= start, Reading.time <= end
             )
         )
     ).all()
     tz = local_tz()
-    return [(row.time.astimezone(tz), row.consumption) for row in rows]
+    return [(row.time.astimezone(tz), row.consumption, row.raw_value) for row in rows]
 
 
 async def weather_records(
