@@ -35,20 +35,53 @@ There is no login/auth on the web UI — it's meant for local/home network use.
 
 ## Setup
 
-1. Copy `.env.example` to `.env` and fill in:
+### Docker (recommended)
+
+Pre-built images are published to [GitHub Container Registry](https://github.com/users/matthewjthomas/packages/container/energy-radar).
+Use **`latest`** for normal installs (updated on every release):
+
+```sh
+docker pull ghcr.io/matthewjthomas/energy-radar:latest
+```
+
+1. Clone this repo and copy the environment file:
+
+   ```sh
+   git clone https://github.com/matthewjthomas/energy-radar.git
+   cd energy-radar
+   cp .env.example .env
+   ```
+
+2. Edit `.env` and set:
    - `HA_URL` / `HA_TOKEN` — your Home Assistant base URL and a
      [long-lived access token](https://www.home-assistant.io/docs/authentication/#your-account-profile).
    - `POSTGRES_PASSWORD` — a password for the TimescaleDB container.
-2. Start everything:
+
+3. Start the stack (pulls `ghcr.io/matthewjthomas/energy-radar:latest` via `docker-compose.yml`):
 
    ```sh
+   docker compose pull
    docker compose up -d
    ```
 
-3. Open `http://localhost:8000` and go to **Settings** to:
+4. Open `http://localhost:8000` and go to **Settings** to:
    - Discover Home Assistant sensors and map them to electricity/gas/water (each is optional).
    - Enter your address (geocoded via Open-Meteo, no API key needed).
    - Optionally set a price per unit for cost estimates.
+
+To pin a specific release instead of tracking `latest`:
+
+```sh
+docker pull ghcr.io/matthewjthomas/energy-radar:1.0.0
+# then set the app image in docker-compose.yml, or:
+IMAGE=ghcr.io/matthewjthomas/energy-radar:1.0.0 docker compose up -d
+```
+
+On the [GHCR package page](https://github.com/users/matthewjthomas/packages/container/energy-radar), the install
+command reflects whichever tag you are viewing — open the **`latest`** tag (or follow
+[latest directly](https://github.com/users/matthewjthomas/packages/container/energy-radar?tag=latest))
+to see the `docker pull ...:latest` command. The version number shown in the header (e.g. `1.0.0`) is
+the current release; `latest` always points at that same image.
 
 ### Reverse proxy / subpath
 
@@ -108,16 +141,19 @@ uvicorn app.main:app --reload
 
 ## Container images
 
-Images are built and pushed to `ghcr.io/<owner>/energy-radar` by
-[.github/workflows/docker-build.yml](.github/workflows/docker-build.yml) on every merge to `main`.
+Images are built and pushed to
+[`ghcr.io/matthewjthomas/energy-radar`](https://github.com/users/matthewjthomas/packages/container/energy-radar)
+by [.github/workflows/docker-build.yml](.github/workflows/docker-build.yml) on every merge to `main`.
 
 Each merge creates a new **semantic version tag** (`v1.0.0`, `v1.0.1`, …) and publishes:
 
-| Tag | Example |
-|-----|---------|
-| Version | `ghcr.io/<owner>/energy-radar:1.0.0` |
-| Git tag | `ghcr.io/<owner>/energy-radar:v1.0.0` |
-| Latest | `ghcr.io/<owner>/energy-radar:latest` |
+| Tag | Pull command |
+|-----|----------------|
+| Latest (recommended) | `docker pull ghcr.io/matthewjthomas/energy-radar:latest` |
+| Version | `docker pull ghcr.io/matthewjthomas/energy-radar:1.0.0` |
+| Git tag | `docker pull ghcr.io/matthewjthomas/energy-radar:v1.0.0` |
+
+`docker-compose.yml` uses `:latest` by default so `docker compose pull` always fetches the newest release.
 
 By default each merge bumps the **patch** version. Include `[minor]` or `[major]` in the merge
 commit message to bump those instead (or `BREAKING CHANGE` for a major bump). The initial release
