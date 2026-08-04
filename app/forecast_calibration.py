@@ -4,7 +4,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -120,10 +120,22 @@ async def update_bias_for_source(session: AsyncSession, source: SourceType) -> b
     if not rows:
         return False
 
-    predicted = [row.predicted_value for row in rows]
-    actual = [row.actual_value for row in rows if row.actual_value is not None]
-    if len(predicted) != len(actual):
+    valid_pairs = [
+        (row.predicted_value, row.actual_value)
+        for row in rows
+        if row.actual_value is not None
+        and row.predicted_value > 0
+        and row.actual_value > 0
+        and 0.25 <= row.actual_value / row.predicted_value <= 4.0
+    ]
+    if not valid_pairs:
+        await session.execute(
+            delete(ForecastBias).where(ForecastBias.source_type == source)
+        )
         return False
+
+    predicted = [pair[0] for pair in valid_pairs]
+    actual = [pair[1] for pair in valid_pairs]
 
     errors = [p - a for p, a in zip(predicted, actual)]
     bias_offset = float(sum(errors) / len(errors))
@@ -149,6 +161,12 @@ async def update_bias_for_source(session: AsyncSession, source: SourceType) -> b
     )
     await session.execute(stmt)
     return True
+
+
+async def reset_forecast_calibration(session: AsyncSession) -> None:
+    """Remove stored scores and learned bias; live forecasts rebuild immediately."""
+    await session.execute(delete(UsageForecastSnapshot))
+    await session.execute(delete(ForecastBias))
 
 
 async def run_daily_forecast_calibration(
