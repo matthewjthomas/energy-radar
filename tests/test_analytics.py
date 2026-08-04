@@ -43,6 +43,15 @@ def test_aggregate_daily_usage_uses_daily_high_water_mark_on_reset():
     assert daily[dt.date(2026, 8, 3)] == 55.0
 
 
+def test_aggregate_daily_usage_accepts_database_reading_triples():
+    readings = [
+        (dt.datetime(2026, 8, 3, 1, tzinfo=dt.timezone.utc), None, 1.0),
+        (dt.datetime(2026, 8, 3, 2, tzinfo=dt.timezone.utc), 4.0, 5.0),
+        (dt.datetime(2026, 8, 3, 3, tzinfo=dt.timezone.utc), 6.0, 11.0),
+    ]
+    assert aggregate_daily_usage(readings)[dt.date(2026, 8, 3)] == 10.0
+
+
 def test_aggregate_daily_weather_averages_temperature():
     records = [
         {"time": dt.datetime(2026, 8, 1, 6, tzinfo=dt.timezone.utc), "temperature_c": 20.0, "precipitation_mm": 0.0},

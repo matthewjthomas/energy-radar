@@ -97,7 +97,7 @@ async def thermostat_readings(
 
 async def readings_for_source(
     session: AsyncSession, source: SourceType, start: dt.datetime, end: dt.datetime
-) -> list[tuple[dt.datetime, float]]:
+) -> list[tuple[dt.datetime, float | None, float]]:
     rows = (
         await session.execute(
             select(Reading.time, Reading.consumption, Reading.raw_value).where(
@@ -158,10 +158,10 @@ async def pricing_map(session: AsyncSession) -> dict[SourceType, float]:
 
 
 def full_usage_days(
-    readings: list[tuple[dt.datetime, float]], today: dt.date
+    readings: list[tuple[dt.datetime, float | None, float]], today: dt.date
 ) -> set[dt.date]:
     times_by_day: dict[dt.date, list[dt.datetime]] = {}
-    for ts, _ in readings:
+    for ts, _, _ in readings:
         times_by_day.setdefault(ts.date(), []).append(ts)
     full_days: set[dt.date] = set()
     for day, times in times_by_day.items():

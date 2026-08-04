@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -24,8 +25,21 @@ logger = logging.getLogger(__name__)
 _INSERT_BATCH_SIZE = 500
 # How many calendar days of archive weather to pull per scheduler tick.
 _WEATHER_BACKFILL_CHUNK_DAYS = 30
-# Raw HA history is more reliable than long-term statistics for the current day.
-_RECENT_HISTORY_HOURS = 72
+# Raw HA history is more reliable than long-term statistics for recent days.
+# Use complete local calendar days so one day never mixes the two data sources.
+_RECENT_HISTORY_DAYS = 7
+
+
+def _recent_history_start(
+    now: dt.datetime, timezone_name: str
+) -> dt.datetime:
+    """Return UTC midnight at the start of the recent local-day window."""
+    tz = ZoneInfo(timezone_name)
+    local_today = now.astimezone(tz).date()
+    first_day = local_today - dt.timedelta(days=_RECENT_HISTORY_DAYS - 1)
+    return dt.datetime.combine(first_day, dt.time.min, tzinfo=tz).astimezone(
+        dt.timezone.utc
+    )
 
 
 def _batched(items: list, size: int):
@@ -231,7 +245,7 @@ async def poll_ha_readings() -> None:
                 if last_reading
                 else now - dt.timedelta(days=settings.ha_stats_lookback_days)
             )
-            recent_start = now - dt.timedelta(hours=_RECENT_HISTORY_HOURS)
+            recent_start = _recent_history_start(now, settings.app_timezone)
 
             history_rows: list[dict] = []
             try:
@@ -240,16 +254,16 @@ async def poll_ha_readings() -> None:
             except HomeAssistantError:
                 logger.warning("Failed to fetch recent HA history for %s", cfg.entity_id, exc_info=True)
 
-            uses_statistics = True
-            stats_rows: list[dict] = []
-            if stats_start < recent_start:
-                fetched = await _rows_from_statistics(
-                    client, cfg, stats_start, recent_start, last_reading
-                )
-                if fetched is None:
-                    uses_statistics = False
-                else:
-                    stats_rows = fetched
+            # Always probe statistics up to the calendar boundary. This avoids
+            # guessing based on the latest row, which may itself be raw history.
+            stats_probe_start = min(
+                stats_start, recent_start - dt.timedelta(hours=2)
+            )
+            fetched = await _rows_from_statistics(
+                client, cfg, stats_probe_start, recent_start, last_reading
+            )
+            uses_statistics = fetched is not None
+            stats_rows = fetched or []
 
             if not uses_statistics:
                 # Entity has no long-term statistics — incremental raw history only.
