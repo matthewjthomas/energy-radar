@@ -62,6 +62,18 @@ function fmtDate(d) {
   return new Date(d).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+// Calendar date in the browser's local timezone (avoid UTC shift from toISOString()).
+function toISODate(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function localTodayISO() {
+  return toISODate(new Date());
+}
+
 const TEMP_UNIT_KEY = "energyRadarTempUnit";
 
 function getTempUnit() {

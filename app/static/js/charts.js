@@ -128,7 +128,7 @@ function renderUsageWeatherChart(canvasId, usageBySource, weatherPoints, eventMa
     for (const p of points) allDays.add(p.date);
   }
   const labels = [...allDays].sort();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localTodayISO();
 
   const datasets = [];
   for (const [source, points] of Object.entries(usageBySource)) {
@@ -201,7 +201,7 @@ function renderForecastChart(canvasId, forecastPoints, source, unit = "") {
   const hasTemps = forecastPoints.some((p) => p.high_temp_c != null);
   const usageColor = _sourceColor(source);
   const tempColor = colors.tempLine;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localTodayISO();
 
   _chartInstances[canvasId] = new Chart(canvas, {
     type: "line",
