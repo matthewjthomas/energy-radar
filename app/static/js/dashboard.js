@@ -8,10 +8,6 @@ function defaultRange() {
   return { start: toISODate(start), end: toISODate(end) };
 }
 
-function toISODate(d) {
-  return d.toISOString().slice(0, 10);
-}
-
 function rangeQuery() {
   return `start=${currentRange.start}&end=${currentRange.end}`;
 }
