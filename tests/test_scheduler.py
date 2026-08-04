@@ -3,11 +3,14 @@ from __future__ import annotations
 
 import datetime as dt
 
+import pytest
+
 from app.models import SourceType
 from app.scheduler import (
     _merge_latest_state,
     _recent_history_start,
     _rows_from_history_points,
+    _rows_from_statistics,
 )
 
 
@@ -57,3 +60,37 @@ def test_merge_latest_state_replaces_same_timestamp():
     merged = _merge_latest_state(points, latest)
 
     assert merged == [latest]
+
+
+@pytest.mark.asyncio
+async def test_statistics_rows_use_consumption_without_raw_reset_detection():
+    class _Client:
+        async def get_statistics(self, entity_id, start, end, period):
+            return [
+                {"time": start, "sum": 100.0, "state": None, "mean": None},
+                {
+                    "time": start + dt.timedelta(hours=1),
+                    "sum": 105.0,
+                    "state": None,
+                    "mean": None,
+                },
+                {
+                    "time": start + dt.timedelta(hours=2),
+                    "sum": 95.0,
+                    "state": None,
+                    "mean": None,
+                },
+            ]
+
+    start = dt.datetime(2026, 8, 1, tzinfo=dt.timezone.utc)
+    rows = await _rows_from_statistics(
+        _Client(),
+        _Cfg(),
+        start,
+        start + dt.timedelta(hours=3),
+        None,
+    )
+
+    assert rows is not None
+    assert [row["raw_value"] for row in rows] == [0.0, 0.0, 0.0]
+    assert [row["consumption"] for row in rows] == [None, 5.0, None]
