@@ -44,6 +44,21 @@ def test_aggregate_daily_usage_uses_daily_high_water_mark_on_reset():
     assert daily[dt.date(2026, 8, 3)] == 55.0
 
 
+def test_aggregate_daily_usage_ignores_previous_day_boundary_state():
+    readings = [
+        # HA includes the state active at the query boundary before recording
+        # the daily meter reset immediately after midnight.
+        (dt.datetime(2026, 8, 4, 0, 0, tzinfo=dt.timezone.utc), 0.03, 68.23),
+        (dt.datetime(2026, 8, 4, 0, 1, tzinfo=dt.timezone.utc), None, 0.04),
+        (dt.datetime(2026, 8, 4, 12, 0, tzinfo=dt.timezone.utc), 25.0, 25.04),
+        (dt.datetime(2026, 8, 4, 18, 0, tzinfo=dt.timezone.utc), 26.15, 51.19),
+    ]
+
+    daily = aggregate_daily_usage(readings)
+
+    assert daily[dt.date(2026, 8, 4)] == 51.19
+
+
 def test_aggregate_daily_usage_accepts_database_reading_triples():
     readings = [
         (dt.datetime(2026, 8, 3, 1, tzinfo=dt.timezone.utc), None, 1.0),

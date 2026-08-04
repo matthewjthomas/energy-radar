@@ -34,7 +34,7 @@ def aggregate_daily_usage(
         | tuple[dt.datetime, float | None, float | None]
     ],
 ) -> dict[dt.date, float]:
-    """Sum consumption by day, using the daily high-water mark for reset-style meters."""
+    """Sum consumption by day, handling reset-style cumulative meters."""
     by_day: dict[dt.date, list[tuple[dt.datetime, float | None, float | None]]] = {}
     for entry in readings:
         if len(entry) == 2:
@@ -47,15 +47,22 @@ def aggregate_daily_usage(
     totals: dict[dt.date, float] = {}
     for day, points in by_day.items():
         points_sorted = sorted(points, key=lambda p: p[0])
-        raw_values = [p[2] for p in points_sorted if p[2] is not None]
-        has_reset = any(
-            points_sorted[i][2] is not None
+        reset_indexes = [
+            i
+            for i in range(1, len(points_sorted))
+            if points_sorted[i][2] is not None
             and points_sorted[i - 1][2] is not None
             and points_sorted[i][2] < points_sorted[i - 1][2] - 0.5
-            for i in range(1, len(points_sorted))
-        )
-        if has_reset and raw_values:
-            totals[day] = max(raw_values)
+        ]
+        if reset_indexes:
+            # HA history includes the state immediately before the requested
+            # window. For a daily-reset sensor that can put yesterday's final
+            # value just after local midnight, followed by today's reset. Use
+            # only the current segment so yesterday's value cannot pin today.
+            current_segment = points_sorted[reset_indexes[-1] :]
+            raw_values = [p[2] for p in current_segment if p[2] is not None]
+            if raw_values:
+                totals[day] = max(raw_values)
             continue
         total = sum(p[1] for p in points_sorted if p[1] is not None)
         if total:
