@@ -196,8 +196,8 @@ async def upsert_pricing(payload: PricingConfigIn, session: AsyncSession = Depen
 
 @router.post("/maintenance/refresh")
 async def trigger_refresh(background_tasks: BackgroundTasks):
-    """Kick off an immediate poll of HA readings and a weather refresh."""
-    background_tasks.add_task(poll_ha_readings)
+    """Rebuild HA utility history and refresh the other external data."""
+    background_tasks.add_task(poll_ha_readings, True)
     background_tasks.add_task(poll_thermostat_readings)
     background_tasks.add_task(poll_weather_historical)
     background_tasks.add_task(poll_weather_forecast)

@@ -238,7 +238,13 @@ class HomeAssistantClient:
         ws_url = f"{scheme}://{host}/api/websocket"
 
         try:
-            async with websockets.connect(ws_url, open_timeout=self._timeout) as ws:
+            # A year of hourly statistics can exceed websockets' 1 MiB default.
+            # Keep a bounded but sufficiently large limit for full history rebuilds.
+            async with websockets.connect(
+                ws_url,
+                open_timeout=self._timeout,
+                max_size=16 * 1024 * 1024,
+            ) as ws:
                 hello = json.loads(await ws.recv())
                 if hello.get("type") != "auth_required":
                     raise HomeAssistantError("Unexpected Home Assistant websocket handshake")

@@ -203,7 +203,11 @@ async def _rows_from_statistics(
                 "time": timestamp,
                 "source_type": cfg.source_type,
                 "entity_id": cfg.entity_id,
-                "raw_value": value,
+                # Statistics use a different cumulative baseline than the raw
+                # entity state. Keep raw_value neutral so aggregation relies on
+                # interval consumption and cannot mistake a statistics correction
+                # for a daily-meter reset.
+                "raw_value": 0.0,
                 "consumption": consumption,
             }
         )
@@ -223,7 +227,8 @@ async def _rows_from_statistics(
     return rows
 
 
-async def poll_ha_readings() -> None:
+async def poll_ha_readings(full_refresh: bool = False) -> None:
+    """Poll configured utility entities, optionally rebuilding all stored history."""
     settings = get_settings()
     if not settings.ha_configured:
         return
@@ -239,7 +244,7 @@ async def poll_ha_readings() -> None:
             return
 
         for cfg in configs:
-            last_reading = (
+            stored_last_reading = (
                 await session.execute(
                     select(Reading)
                     .where(Reading.entity_id == cfg.entity_id, Reading.source_type == cfg.source_type)
@@ -247,6 +252,7 @@ async def poll_ha_readings() -> None:
                     .limit(1)
                 )
             ).scalar_one_or_none()
+            last_reading = None if full_refresh else stored_last_reading
 
             # Long-term statistics are retained indefinitely by default (unlike raw
             # state history, which HA typically purges after ~10 days), so they're
@@ -263,12 +269,14 @@ async def poll_ha_readings() -> None:
             recent_start = _recent_history_start(now, settings.app_timezone)
 
             history_rows: list[dict] = []
+            history_fetched = False
             try:
                 history_points = await client.get_history(cfg.entity_id, recent_start, now)
             except HomeAssistantError:
                 logger.warning("Failed to fetch recent HA history for %s", cfg.entity_id, exc_info=True)
                 history_points = []
             else:
+                history_fetched = True
                 try:
                     latest_state = await client.get_latest_state(cfg.entity_id)
                 except Exception:
@@ -290,7 +298,11 @@ async def poll_ha_readings() -> None:
 
             if not uses_statistics:
                 # Entity has no long-term statistics — incremental raw history only.
-                history_start = last_reading.time if last_reading else now - dt.timedelta(days=2)
+                history_start = (
+                    recent_start
+                    if full_refresh
+                    else last_reading.time if last_reading else now - dt.timedelta(days=2)
+                )
                 try:
                     history_points = await client.get_history(cfg.entity_id, history_start, now)
                 except HomeAssistantError:
@@ -305,12 +317,33 @@ async def poll_ha_readings() -> None:
                 rows = _rows_from_history(cfg, history_points, last_reading)
                 logger.info("Fetched %d raw-history rows for %s", len(rows), cfg.entity_id)
                 if rows:
+                    if full_refresh:
+                        await session.execute(
+                            delete(Reading).where(
+                                Reading.entity_id == cfg.entity_id,
+                                Reading.source_type == cfg.source_type,
+                            )
+                        )
                     await _upsert_readings(session, rows)
                 continue
 
             # Entity uses statistics for older data; always refresh the recent window
             # from raw history so we don't double-count stats + state-change rows.
-            await _clear_recent_readings(session, cfg, recent_start)
+            if full_refresh:
+                if not history_fetched:
+                    logger.error(
+                        "Skipping full rebuild for %s because recent history was unavailable",
+                        cfg.entity_id,
+                    )
+                    continue
+                await session.execute(
+                    delete(Reading).where(
+                        Reading.entity_id == cfg.entity_id,
+                        Reading.source_type == cfg.source_type,
+                    )
+                )
+            else:
+                await _clear_recent_readings(session, cfg, recent_start)
             if history_rows:
                 await _upsert_readings(session, history_rows)
             if stats_rows:
@@ -318,7 +351,8 @@ async def poll_ha_readings() -> None:
                 if older_stats:
                     await _upsert_readings(session, older_stats)
             logger.info(
-                "Refreshed %s: %d recent history rows (%s -> now), %d older stats rows",
+                "%s %s: %d recent history rows (%s -> now), %d older stats rows",
+                "Fully rebuilt" if full_refresh else "Refreshed",
                 cfg.entity_id,
                 len(history_rows),
                 recent_start.isoformat(),
