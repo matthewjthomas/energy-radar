@@ -470,6 +470,14 @@ button.danger { background: var(--danger); color: #fff; }
 .muted { color: var(--muted); }
 .section-hint { margin: -4px 0 12px; font-size: 0.85rem; }
 
+.maintenance-action + .maintenance-action {
+  margin-top: 20px;
+}
+
+.maintenance-action > .muted {
+  margin: 0 0 10px;
+}
+
 .table-scroll { overflow-x: auto; }
 
 .data-table {
